@@ -1,0 +1,438 @@
+import { useEffect, useRef } from "react";
+
+const CSS = `
+  @keyframes float1 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(40px, -60px) scale(1.08); }
+    66% { transform: translate(-30px, 30px) scale(0.95); }
+  }
+  @keyframes float2 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(-50px, 40px) scale(1.1); }
+    66% { transform: translate(60px, -20px) scale(0.92); }
+  }
+  @keyframes float3 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(30px, 50px) scale(1.05); }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(32px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes shimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position: 200% center; }
+  }
+  @keyframes borderGlow {
+    0%, 100% { box-shadow: 0 0 16px rgba(0,128,128,0.2), inset 0 0 16px rgba(0,128,128,0.03); }
+    50%       { box-shadow: 0 0 40px rgba(0,128,128,0.5), inset 0 0 24px rgba(0,128,128,0.07); }
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,128,128,0.45); }
+    50%       { box-shadow: 0 0 0 8px rgba(0,128,128,0); }
+  }
+
+  .lp-fade-up-1 { animation: fadeUp 0.75s 0.05s ease both; }
+  .lp-fade-up-2 { animation: fadeUp 0.75s 0.2s ease both; }
+  .lp-fade-up-3 { animation: fadeUp 0.75s 0.35s ease both; }
+  .lp-fade-up-4 { animation: fadeUp 0.75s 0.5s ease both; }
+
+  .lp-book-btn {
+    padding: 14px 32px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #008080, #00b3b3, #008080);
+    background-size: 200% auto;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    text-decoration: none;
+    display: inline-block;
+    transition: background-position 0.4s, transform 0.2s, box-shadow 0.3s;
+    box-shadow: 0 4px 28px rgba(0,128,128,0.35);
+    letter-spacing: 0.02em;
+  }
+  .lp-book-btn:hover {
+    background-position: right center;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 40px rgba(0,128,128,0.6);
+  }
+  .lp-outline-btn {
+    padding: 14px 28px;
+    border-radius: 12px;
+    border: 1px solid #2a2a2a;
+    background: rgba(255,255,255,0.02);
+    color: #888;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-block;
+    transition: border-color 0.2s, color 0.2s, transform 0.2s;
+  }
+  .lp-outline-btn:hover {
+    border-color: rgba(0,128,128,0.5);
+    color: #33b5b5;
+    transform: translateY(-2px);
+  }
+  .lp-nav-login {
+    padding: 8px 20px;
+    border-radius: 8px;
+    border: 1px solid #222;
+    background: rgba(255,255,255,0.02);
+    color: #888;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .lp-nav-login:hover { border-color: #33b5b5; color: #33b5b5; }
+
+  .lp-feat-card {
+    background: #0f0f0f;
+    border: 1px solid #1a1a1a;
+    border-radius: 16px;
+    padding: 28px;
+    transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .lp-feat-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(0,128,128,0.05), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .lp-feat-card:hover {
+    border-color: rgba(0,128,128,0.35);
+    transform: translateY(-5px);
+    box-shadow: 0 16px 48px rgba(0,128,128,0.1);
+  }
+  .lp-feat-card:hover::before { opacity: 1; }
+
+  .lp-addon-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 18px;
+    border-radius: 20px;
+    background: #111;
+    border: 1px solid #1e1e1e;
+    font-size: 13px;
+    color: #666;
+    transition: border-color 0.2s, color 0.2s, transform 0.25s, box-shadow 0.25s;
+    cursor: default;
+  }
+  .lp-addon-chip:hover {
+    border-color: rgba(0,128,128,0.45);
+    color: #33b5b5;
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0,128,128,0.12);
+  }
+
+  .lp-float-card {
+    background: rgba(12,12,12,0.85);
+    border: 1px solid rgba(0,128,128,0.2);
+    border-radius: 20px;
+    padding: 28px;
+    backdrop-filter: blur(24px);
+    animation: borderGlow 4s ease-in-out infinite;
+    min-width: 250px;
+    flex-shrink: 0;
+  }
+
+  .lp-stat {
+    background: #0f0f0f;
+    border: 1px solid #1a1a1a;
+    border-radius: 14px;
+    padding: 22px 20px;
+    text-align: center;
+    transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+  }
+  .lp-stat:hover {
+    border-color: rgba(0,128,128,0.35);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 28px rgba(0,128,128,0.1);
+  }
+
+  .lp-cta-box {
+    max-width: 620px;
+    margin: 0 auto;
+    border-radius: 24px;
+    padding: 64px 48px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(0,128,128,0.25);
+    animation: borderGlow 4s ease-in-out infinite;
+    background: radial-gradient(ellipse at top, rgba(0,128,128,0.08) 0%, transparent 65%);
+  }
+
+  .lp-tagline-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: #33b5b5;
+    background: rgba(0,128,128,0.08);
+    border: 1px solid rgba(0,128,128,0.22);
+    padding: 6px 16px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    animation: pulse 3s ease-in-out infinite;
+  }
+  .lp-tagline-badge::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #33b5b5;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  .lp-heading-gradient {
+    background: linear-gradient(110deg, #f0f0f0 20%, #33b5b5 55%, #008080 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shimmer 5s linear infinite;
+  }
+
+  .lp-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: #33b5b5;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .lp-section-label::before,
+  .lp-section-label::after {
+    content: '';
+    height: 1px;
+    width: 36px;
+    background: linear-gradient(90deg, transparent, rgba(0,128,128,0.4));
+  }
+  .lp-section-label::after {
+    background: linear-gradient(90deg, rgba(0,128,128,0.4), transparent);
+  }
+
+  html { scroll-behavior: smooth; }
+
+  @media (max-width: 640px) {
+    .lp-hero-text { text-align: center; align-items: center; }
+    .lp-hero-btns { justify-content: center; }
+    .lp-float-card { width: 100%; min-width: unset; }
+    .lp-footer { flex-direction: column; align-items: center; text-align: center; gap: 6px; }
+    .lp-footer p, .lp-footer a { font-size: 11px; }
+  }
+`;
+
+const FEATURES = [
+  { icon: "🛋️", title: "Comfortable Rooms", desc: "Well-furnished rooms designed for rest, relaxation, and productivity." },
+  { icon: "🍽️", title: "Home-cooked Meals", desc: "Fresh hygienic home food — breakfast, dinner, or full thali on request." },
+  { icon: "📶", title: "Fast Wi-Fi", desc: "High-speed internet throughout. Perfect for work or streaming." },
+  { icon: "🔒", title: "Safe & Secure", desc: "Aadhaar-verified check-in, 24/7 support, and a trusted environment." },
+  { icon: "🛵", title: "Local Transport", desc: "Bike, scooter, or car rental at your convenience." },
+  { icon: "✨", title: "Premium Add-ons", desc: "Room decoration to grocery stocking — curated extras for every need." },
+];
+
+const ADDONS = [
+  { icon: "🕐", label: "Early Check-in" },
+  { icon: "🍽️", label: "Breakfast" },
+  { icon: "👕", label: "Laundry" },
+  { icon: "🛵", label: "Bike Rental" },
+  { icon: "🗺️", label: "Local Tour" },
+  { icon: "🎉", label: "Room Decoration" },
+  { icon: "💻", label: "WFH Setup" },
+  { icon: "🛒", label: "Grocery Stocking" },
+  { icon: "🧃", label: "Mini Bar" },
+  { icon: "🧹", label: "Housekeeping" },
+  { icon: "📺", label: "Streaming" },
+];
+
+const STATS = [
+  { value: "4.9★", label: "Guest Rating" },
+  { value: "100%", label: "Privacy" },
+  { value: "24/7", label: "Support" },
+  { value: "11+", label: "Add-on Services" },
+];
+
+export default function LandingPage() {
+  const styleRef = useRef(null);
+
+  useEffect(() => {
+    const el = document.createElement("style");
+    el.textContent = CSS;
+    document.head.appendChild(el);
+    styleRef.current = el;
+    return () => el.remove();
+  }, []);
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0a", color: "#e0e0e0", fontFamily: "inherit", overflowX: "hidden" }}>
+
+      {/* Animated BG orbs */}
+      <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
+        <div style={{ position: "absolute", width: "650px", height: "650px", borderRadius: "50%", background: "radial-gradient(circle, rgba(0,128,128,0.13) 0%, transparent 70%)", top: "-180px", left: "-120px", animation: "float1 20s ease-in-out infinite" }} />
+        <div style={{ position: "absolute", width: "520px", height: "520px", borderRadius: "50%", background: "radial-gradient(circle, rgba(0,160,160,0.09) 0%, transparent 70%)", bottom: "-60px", right: "-100px", animation: "float2 24s ease-in-out infinite" }} />
+        <div style={{ position: "absolute", width: "380px", height: "380px", borderRadius: "50%", background: "radial-gradient(circle, rgba(0,128,128,0.07) 0%, transparent 70%)", top: "45%", left: "45%", animation: "float3 28s ease-in-out infinite" }} />
+        {/* Subtle grid */}
+        <div style={{ position: "absolute", inset: 0, backgroundImage: "linear-gradient(rgba(255,255,255,0.012) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.012) 1px, transparent 1px)", backgroundSize: "64px 64px" }} />
+        {/* Vignette */}
+        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%)" }} />
+      </div>
+
+      <div style={{ position: "relative", zIndex: 1 }}>
+
+        {/* Navbar */}
+        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 40px", borderBottom: "1px solid rgba(255,255,255,0.04)", position: "sticky", top: 0, background: "rgba(10,10,10,0.75)", backdropFilter: "blur(24px)", zIndex: 100 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ width: "36px", height: "36px", borderRadius: "50%", overflow: "hidden", border: "1.5px solid rgba(0,128,128,0.45)", boxShadow: "0 0 14px rgba(0,128,128,0.25)" }}>
+              <img src="/logo.png" alt="Luxora" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+            </div>
+            <span style={{ fontSize: "18px", fontWeight: "800", color: "#f0f0f0", letterSpacing: "-0.01em" }}>Luxora</span>
+          </div>
+          <a href="https://www.instagram.com/luxora.ncr/" target="_blank" rel="noopener noreferrer" className="lp-nav-login" style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+            Follow Us
+          </a>
+        </nav>
+
+        {/* Hero */}
+        <section style={{ maxWidth: "1100px", margin: "0 auto", padding: "110px 40px 90px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "56px" }}>
+          <div className="lp-hero-text" style={{ flex: 1, minWidth: "280px", maxWidth: "580px", display: "flex", flexDirection: "column" }}>
+            <div className="lp-tagline-badge lp-fade-up-1" style={{ marginBottom: "24px" }}>Stay in Style</div>
+
+            <h1 className="lp-fade-up-2" style={{ fontSize: "clamp(38px, 5.5vw, 66px)", fontWeight: "800", lineHeight: "1.08", marginBottom: "22px", letterSpacing: "-0.03em" }}>
+              Your Home<br />
+              <span className="lp-heading-gradient">Away From Home</span>
+            </h1>
+
+            <p className="lp-fade-up-3" style={{ fontSize: "17px", color: "#555", lineHeight: "1.8", marginBottom: "38px", maxWidth: "460px" }}>
+              Experience premium comfort, personalised service, and a stay that feels truly yours — from cosy rooms to curated add-ons.
+            </p>
+
+            <div className="lp-fade-up-4 lp-hero-btns" style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+              <a href="/guest" className="lp-book-btn">Book Your Stay →</a>
+              <a href="#features" className="lp-outline-btn">Explore Services</a>
+            </div>
+          </div>
+
+          {/* Floating info card */}
+          <div className="lp-float-card lp-fade-up-3">
+            {[
+              { icon: "📍", label: "Location", val: "Noida, UP" },
+              { icon: "⭐", label: "Guest Rating", val: "4.9 / 5.0" },
+              { icon: "🏡", label: "Stay Type", val: "Private Studio House" },
+              { icon: "🛎️", label: "Check-in", val: "Flexible Timings" },
+            ].map((item, i) => (
+              <div key={item.label}>
+                {i > 0 && <div style={{ height: "1px", background: "rgba(255,255,255,0.04)", margin: "14px 0" }} />}
+                <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                  <div style={{ width: "40px", height: "40px", borderRadius: "10px", background: "rgba(0,128,128,0.1)", border: "1px solid rgba(0,128,128,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", flexShrink: 0 }}>
+                    {item.icon}
+                  </div>
+                  <div>
+                    <p style={{ fontSize: "10px", color: "#444", fontWeight: "600", letterSpacing: "0.08em", textTransform: "uppercase" }}>{item.label}</p>
+                    <p style={{ fontSize: "14px", color: "#e0e0e0", fontWeight: "600", marginTop: "3px" }}>{item.val}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Stats */}
+        <section style={{ maxWidth: "1100px", margin: "0 auto", padding: "0 40px 90px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
+            {STATS.map((s) => (
+              <div key={s.label} className="lp-stat">
+                <p style={{ fontSize: "30px", fontWeight: "800", color: "#33b5b5", letterSpacing: "-0.02em" }}>{s.value}</p>
+                <p style={{ fontSize: "12px", color: "#444", marginTop: "5px", fontWeight: "500", letterSpacing: "0.04em" }}>{s.label}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Features */}
+        <section id="features" style={{ padding: "90px 40px", background: "rgba(255,255,255,0.012)", borderTop: "1px solid rgba(255,255,255,0.035)", borderBottom: "1px solid rgba(255,255,255,0.035)" }}>
+          <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: "52px" }}>
+              <p className="lp-section-label">What We Offer</p>
+              <h2 style={{ fontSize: "clamp(26px, 3.5vw, 42px)", fontWeight: "800", color: "#f0f0f0", letterSpacing: "-0.02em", lineHeight: "1.2" }}>
+                Everything You Need,<br />
+                <span style={{ color: "#33b5b5" }}>Nothing You Don't</span>
+              </h2>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: "14px" }}>
+              {FEATURES.map((f) => (
+                <div key={f.title} className="lp-feat-card">
+                  <span style={{ fontSize: "34px", display: "block", marginBottom: "18px" }}>{f.icon}</span>
+                  <p style={{ fontSize: "15px", fontWeight: "700", color: "#e0e0e0", marginBottom: "8px" }}>{f.title}</p>
+                  <p style={{ fontSize: "13px", color: "#555", lineHeight: "1.65" }}>{f.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Add-ons */}
+        <section style={{ padding: "90px 40px", textAlign: "center" }}>
+          <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+            <p className="lp-section-label">Add-on Services</p>
+            <h2 style={{ fontSize: "clamp(24px, 3vw, 38px)", fontWeight: "800", color: "#f0f0f0", marginBottom: "14px", letterSpacing: "-0.02em" }}>
+              Personalise Your Stay
+            </h2>
+            <p style={{ color: "#555", fontSize: "15px", marginBottom: "40px", lineHeight: "1.7" }}>
+              Select any extras when booking — we'll take care of the rest.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "center" }}>
+              {ADDONS.map((a) => (
+                <div key={a.label} className="lp-addon-chip">
+                  <span>{a.icon}</span>
+                  <span>{a.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* CTA */}
+        <section style={{ padding: "80px 40px" }}>
+          <div className="lp-cta-box">
+            <div className="lp-tagline-badge" style={{ margin: "0 auto 22px" }}>Stay in Style</div>
+            <h2 style={{ fontSize: "clamp(26px, 4vw, 44px)", fontWeight: "800", color: "#f0f0f0", marginBottom: "14px", letterSpacing: "-0.02em" }}>
+              Ready for a Great Stay?
+            </h2>
+            <p style={{ color: "#555", fontSize: "16px", marginBottom: "36px", lineHeight: "1.75" }}>
+              Fill in a quick form and we'll handle everything from there.<br />No account needed. No hassle.
+            </p>
+            <a href="/guest" className="lp-book-btn" style={{ fontSize: "16px", padding: "16px 48px" }}>
+              Book Now →
+            </a>
+          </div>
+        </section>
+
+        {/* Footer */}
+        <footer className="lp-footer" style={{ padding: "28px 40px", borderTop: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ width: "28px", height: "28px", borderRadius: "50%", overflow: "hidden", border: "1px solid #2a2a2a" }}>
+              <img src="/logo.png" alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+            </div>
+            <span style={{ color: "#333", fontSize: "13px", fontWeight: "600" }}>Luxora</span>
+          </div>
+          <p style={{ color: "#2a2a2a", fontSize: "12px" }}>© {new Date().getFullYear()} Luxora. All rights reserved.</p>
+          <a href="/login" style={{ color: "#333", fontSize: "12px", textDecoration: "none" }}>Admin →</a>
+        </footer>
+      </div>
+    </div>
+  );
+}

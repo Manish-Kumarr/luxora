@@ -5,6 +5,7 @@ import {
   ArrowLeftRight,
   LogOut,
   ListTodo,
+  CalendarDays,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
@@ -14,6 +15,7 @@ const navItems = [
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "settlement", label: "Settlement", icon: ArrowLeftRight },
   { id: "todo", label: "Todo", icon: ListTodo },
+  { id: "bookings", label: "Guest Bookings", icon: CalendarDays },
 ];
 
 export default function Sidebar({ active, setActive, isMobile, open }) {

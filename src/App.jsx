@@ -7,6 +7,10 @@ import Expenses from "./pages/Expenses";
 import Analytics from "./pages/Analytics";
 import Settlement from "./pages/Settlement";
 import Todo from "./pages/Todo";
+import Bookings from "./pages/Bookings";
+import GuestForm from "./pages/GuestForm";
+import UploadDocs from "./pages/UploadDocs";
+import LandingPage from "./pages/LandingPage";
 import { Menu } from "lucide-react";
 import { useWindowWidth } from "./hooks/useWindowWidth";
 
@@ -16,6 +20,7 @@ const PAGE_TITLES = {
   analytics: "Analytics",
   settlement: "Settlement",
   todo: "Todo",
+  bookings: "Guest Bookings",
 };
 
 function AppInner() {
@@ -31,7 +36,17 @@ function AppInner() {
     </div>
   );
 
-  if (!isLoggedIn) return <LoginPage />;
+  if (!isLoggedIn) {
+    if (window.location.pathname !== "/login") {
+      window.location.replace("/login");
+      return null;
+    }
+    return <LoginPage />;
+  }
+  if (window.location.pathname === "/login") {
+    window.location.replace("/dashboard");
+    return null;
+  }
 
   const pages = {
     dashboard: <Dashboard isMobile={isMobile} />,
@@ -39,6 +54,7 @@ function AppInner() {
     analytics: <Analytics isMobile={isMobile} />,
     settlement: <Settlement isMobile={isMobile} />,
     todo: <Todo isMobile={isMobile} />,
+    bookings: <Bookings isMobile={isMobile} />,
   };
 
   const handleNavChange = (page) => {
@@ -98,6 +114,14 @@ function AppInner() {
 }
 
 export default function App() {
+  const path = window.location.pathname;
+
+  // Public routes — no login needed
+  if (path === "/") return <LandingPage />;
+  if (path === "/guest") return <GuestForm />;
+  if (path === "/upload") return <UploadDocs />;
+
+  // Admin panel (login at /login or any other route)
   return (
     <AppProvider>
       <AppInner />

@@ -10,6 +10,10 @@ export function AppProvider({ children }) {
   const [loading, setLoading] = useState(false);
   const [todos, setTodos] = useState([]);
   const [todosLoading, setTodosLoading] = useState(false);
+  const [bookings, setBookings] = useState([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [payments, setPayments] = useState([]);
+
 
   // Check existing session on mount
   useEffect(() => {
@@ -29,9 +33,13 @@ export function AppProvider({ children }) {
     if (user) {
       fetchExpenses();
       fetchTodos();
+      fetchBookings();
+      fetchPayments();
     } else {
       setExpenses([]);
       setTodos([]);
+      setBookings([]);
+      setPayments([]);
     }
   }, [user]);
 
@@ -93,6 +101,79 @@ export function AppProvider({ children }) {
     return { error };
   };
 
+  const fetchBookings = async () => {
+    setBookingsLoading(true);
+    const { data, error } = await supabase
+      .from("guest_bookings")
+      .select("*")
+      .order("created_at", { ascending: false });
+    console.log("fetchBookings →", { data, error });
+    if (error) console.error("fetchBookings error:", error);
+    if (data) setBookings(data);
+    setBookingsLoading(false);
+  };
+
+  const fetchPayments = async () => {
+    const { data, error } = await supabase
+      .from("payments")
+      .select("*")
+      .order("paid_at", { ascending: false });
+    if (!error && data) setPayments(data);
+  };
+
+  const addPayment = async (booking_id, amount, method, type, note) => {
+    const { data, error } = await supabase
+      .from("payments")
+      .insert([{ booking_id, amount: Number(amount), method, type, note }])
+      .select()
+      .single();
+    if (!error && data) setPayments((prev) => [data, ...prev]);
+    return { error };
+  };
+
+  const deletePayment = async (id) => {
+    const { error } = await supabase.from("payments").delete().eq("id", id);
+    if (!error) setPayments((prev) => prev.filter((p) => p.id !== id));
+    return { error };
+  };
+
+  const getDocUrls = (bookingId) => {
+    const base = (name) => supabase.storage.from("documents").getPublicUrl(`${bookingId}/${name}`).data.publicUrl;
+    return { front: base("aadhaar_front"), back: base("aadhaar_back") };
+  };
+
+  const updateBooking = async (id, fields) => {
+    const { data, error } = await supabase
+      .from("guest_bookings")
+      .update(fields)
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setBookings((prev) => prev.map((b) => (b.id === id ? data : b)));
+    return { error };
+  };
+
+  const deleteBooking = async (id) => {
+    const { error } = await supabase.from("guest_bookings").delete().eq("id", id);
+    if (!error) setBookings((prev) => prev.filter((b) => b.id !== id));
+    return { error };
+  };
+
+  const updateBookingStatus = async (id, status) => {
+    const update = { status };
+    if (status === "checked-in") update.checked_in_at = new Date().toISOString();
+    if (status === "checked-out") update.checked_out_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("guest_bookings")
+      .update(update)
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setBookings((prev) => prev.map((b) => (b.id === id ? data : b)));
+    return { error };
+  };
+
   const login = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
@@ -150,6 +231,15 @@ export function AppProvider({ children }) {
         toggleTodo,
         updateTodo,
         deleteTodo,
+        bookings,
+        bookingsLoading,
+        updateBookingStatus,
+        updateBooking,
+        deleteBooking,
+        getDocUrls,
+        payments,
+        addPayment,
+        deletePayment,
       }}
     >
       {children}
