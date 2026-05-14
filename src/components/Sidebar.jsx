@@ -2,9 +2,9 @@ import {
   LayoutDashboard,
   Receipt,
   BarChart3,
-  Settings,
+  ArrowLeftRight,
   LogOut,
-  IndianRupee,
+  ListTodo,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
@@ -12,13 +12,28 @@ const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "expenses", label: "Expenses", icon: Receipt },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "settlement", label: "Settlement", icon: ArrowLeftRight },
+  { id: "todo", label: "Todo", icon: ListTodo },
 ];
 
-export default function Sidebar({ active, setActive }) {
+export default function Sidebar({ active, setActive, isMobile, open }) {
   const { logout } = useApp();
 
+  const sidebarStyle = isMobile
+    ? {
+        ...styles.sidebar,
+        position: "fixed",
+        top: 0,
+        left: 0,
+        zIndex: 200,
+        transform: open ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform 0.25s ease",
+        boxShadow: open ? "4px 0 24px rgba(0,0,0,0.5)" : "none",
+      }
+    : styles.sidebar;
+
   return (
-    <aside style={styles.sidebar}>
+    <aside style={sidebarStyle}>
       <div style={styles.top}>
         <div style={styles.logo}>
           <div style={styles.logoCircle}>
@@ -72,8 +87,6 @@ const styles = {
     flexDirection: "column",
     justifyContent: "space-between",
     padding: "20px 12px",
-    position: "sticky",
-    top: 0,
   },
   top: {
     display: "flex",
@@ -154,6 +167,7 @@ const styles = {
     fontWeight: "700",
     fontSize: "15px",
     color: "#fff",
+    flexShrink: 0,
   },
   userName: {
     fontSize: "13px",

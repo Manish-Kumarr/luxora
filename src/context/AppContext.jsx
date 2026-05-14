@@ -8,6 +8,8 @@ export function AppProvider({ children }) {
   const [authLoading, setAuthLoading] = useState(true);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [todos, setTodos] = useState([]);
+  const [todosLoading, setTodosLoading] = useState(false);
 
   // Check existing session on mount
   useEffect(() => {
@@ -24,8 +26,13 @@ export function AppProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    if (user) fetchExpenses();
-    else setExpenses([]);
+    if (user) {
+      fetchExpenses();
+      fetchTodos();
+    } else {
+      setExpenses([]);
+      setTodos([]);
+    }
   }, [user]);
 
   const fetchExpenses = async () => {
@@ -36,6 +43,54 @@ export function AppProvider({ children }) {
       .order("date", { ascending: false });
     if (!error && data) setExpenses(data.map(mapFromDB));
     setLoading(false);
+  };
+
+  const fetchTodos = async () => {
+    setTodosLoading(true);
+    const { data, error } = await supabase
+      .from("todos")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (!error && data) setTodos(data);
+    setTodosLoading(false);
+  };
+
+  const addTodo = async (text, priority) => {
+    const { data, error } = await supabase
+      .from("todos")
+      .insert([{ text, priority, done: false }])
+      .select()
+      .single();
+    if (!error && data) setTodos((prev) => [data, ...prev]);
+    return { error };
+  };
+
+  const toggleTodo = async (id, done) => {
+    const { data, error } = await supabase
+      .from("todos")
+      .update({ done })
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setTodos((prev) => prev.map((t) => (t.id === id ? data : t)));
+    return { error };
+  };
+
+  const updateTodo = async (id, text, priority) => {
+    const { data, error } = await supabase
+      .from("todos")
+      .update({ text, priority })
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setTodos((prev) => prev.map((t) => (t.id === id ? data : t)));
+    return { error };
+  };
+
+  const deleteTodo = async (id) => {
+    const { error } = await supabase.from("todos").delete().eq("id", id);
+    if (!error) setTodos((prev) => prev.filter((t) => t.id !== id));
+    return { error };
   };
 
   const login = async (email, password) => {
@@ -89,6 +144,12 @@ export function AppProvider({ children }) {
         addExpense,
         updateExpense,
         deleteExpense,
+        todos,
+        todosLoading,
+        addTodo,
+        toggleTodo,
+        updateTodo,
+        deleteTodo,
       }}
     >
       {children}

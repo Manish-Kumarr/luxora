@@ -1,0 +1,184 @@
+/* ===================== APP LAYOUT ===================== */
+.app-layout {
+  display: flex;
+  height: 100vh;
+  background: #0a0a0a;
+  overflow: hidden;
+  position: relative;
+}
+
+.app-main {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-main > main {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Mobile topbar — hidden on desktop */
+.mobile-topbar {
+  display: none;
+}
+
+/* Sidebar overlay — hidden on desktop */
+.sidebar-overlay {
+  display: none;
+}
+
+/* ===================== SIDEBAR ===================== */
+.sidebar {
+  transition: transform 0.25s ease;
+}
+
+/* ===================== GRIDS ===================== */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* ===================== EXPENSES ===================== */
+.filters-bar {
+  display: flex;
+  gap: 12px;
+}
+
+.form-row {
+  display: flex;
+  gap: 14px;
+}
+
+/* Table always scrollable horizontally */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll table {
+  min-width: 700px;
+}
+
+/* ===================== TABLET  ≤ 1024px ===================== */
+@media (max-width: 1024px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ===================== MOBILE  ≤ 768px ===================== */
+@media (max-width: 768px) {
+  /* --- Mobile top bar --- */
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #111;
+    border-bottom: 1px solid #1e1e1e;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    flex-shrink: 0;
+  }
+
+  .mobile-topbar-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #f0f0f0;
+  }
+
+  .hamburger-btn {
+    background: none;
+    border: none;
+    color: #e0e0e0;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    border-radius: 6px;
+  }
+
+  /* --- Sidebar overlay (dark backdrop) --- */
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    z-index: 150;
+  }
+
+  /* --- Sidebar: slide-in drawer --- */
+  .sidebar {
+    position: fixed !important;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    z-index: 200;
+    transform: translateX(-100%);
+    min-width: 240px !important;
+    width: 240px !important;
+  }
+
+  .sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  /* --- Grids collapse --- */
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .charts-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* --- Page padding --- */
+  .resp-page {
+    padding: 16px !important;
+    gap: 16px !important;
+  }
+
+  /* --- Filters stack --- */
+  .filters-bar {
+    flex-direction: column;
+  }
+
+  /* --- Modal form rows stack --- */
+  .form-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* --- Analytics category row: hide progress bar on small screens --- */
+  .cat-progress {
+    display: none;
+  }
+}
+
+/* ===================== SMALL MOBILE  ≤ 480px ===================== */
+@media (max-width: 480px) {
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .mobile-topbar {
+    padding: 10px 14px;
+  }
+
+  .resp-page {
+    padding: 12px !important;
+  }
+}
