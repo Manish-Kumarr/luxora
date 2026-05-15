@@ -308,7 +308,7 @@ export default function LandingPage() {
 
         {/* Hero */}
         <section style={{ maxWidth: "1100px", margin: "0 auto", padding: "110px 40px 90px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "56px" }}>
-          <div className="lp-hero-text" style={{ flex: 1, minWidth: "280px", maxWidth: "580px", display: "flex", flexDirection: "column" }}>
+          <div className="lp-hero-text" style={{ flex: 1, minWidth: "280px", maxWidth: "580px", display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
             <div className="lp-tagline-badge lp-fade-up-1" style={{ marginBottom: "24px" }}>Stay in Style</div>
 
             <h1 className="lp-fade-up-2" style={{ fontSize: "clamp(38px, 5.5vw, 66px)", fontWeight: "800", lineHeight: "1.08", marginBottom: "22px", letterSpacing: "-0.03em" }}>

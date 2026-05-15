@@ -14,7 +14,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { TrendingUp, Receipt, Users, IndianRupee } from "lucide-react";
+import { TrendingUp, Receipt, Users, IndianRupee, CalendarDays, UserCheck, Clock, Wallet } from "lucide-react";
 
 const COLORS = [
   "#008080",
@@ -25,8 +25,15 @@ const COLORS = [
   "#ef4444",
 ];
 
+const STATUS_COLOR = {
+  pending: "#f59e0b",
+  confirmed: "#33b5b5",
+  "checked-in": "#10b981",
+  "checked-out": "#666",
+};
+
 export default function Dashboard({ isMobile }) {
-  const { expenses } = useApp();
+  const { expenses, bookings, payments } = useApp();
 
   const totalExpenses = expenses.reduce((s, e) => s + e.totalAmount, 0);
   const nikhilTotal = expenses.reduce((s, e) => s + (e.nikhilPaid || 0), 0);
@@ -77,6 +84,23 @@ export default function Dashboard({ isMobile }) {
   }));
 
   const fmt = (n) => "₹" + Number(n).toLocaleString("en-IN");
+
+  // Guest stats
+  const totalBookings = bookings.length;
+  const checkedIn = bookings.filter((b) => b.status === "checked-in").length;
+  const pendingBookings = bookings.filter((b) => b.status === "pending").length;
+  const totalRevenue = payments.reduce((s, p) => s + (p.amount || 0), 0);
+  const recentBookings = [...bookings]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 5);
+
+  const bookingStatusData = [
+    { name: "Pending", value: bookings.filter((b) => b.status === "pending").length },
+    { name: "Confirmed", value: bookings.filter((b) => b.status === "confirmed").length },
+    { name: "Checked-in", value: bookings.filter((b) => b.status === "checked-in").length },
+    { name: "Checked-out", value: bookings.filter((b) => b.status === "checked-out").length },
+  ].filter((d) => d.value > 0);
+  const STATUS_PIE_COLORS = ["#f59e0b", "#33b5b5", "#10b981", "#555"];
 
   const statCards = [
     {
@@ -211,7 +235,7 @@ export default function Dashboard({ isMobile }) {
                   borderRadius: 8,
                 }}
                 labelStyle={{ color: "#aaa" }}
-                itemStyle={{ color: "#e0e0e0" }}
+                itemStyle={{ color: "#fff" }}
                 formatter={(v) => [fmt(v), "Amount"]}
               />
               <Area
@@ -253,6 +277,76 @@ export default function Dashboard({ isMobile }) {
               <Legend wrapperStyle={{ fontSize: 11, color: "#888" }} />
             </PieChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Guest Overview */}
+      <div>
+        <h2 style={{ fontSize: isMobile ? "15px" : "17px", fontWeight: "600", color: "#e0e0e0", marginBottom: "12px" }}>
+          Guest Overview
+        </h2>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "16px" }}>
+          {[
+            { label: "Total Bookings", value: totalBookings, icon: CalendarDays, color: "#008080" },
+            { label: "Currently Checked-in", value: checkedIn, icon: UserCheck, color: "#10b981" },
+            { label: "Pending", value: pendingBookings, icon: Clock, color: "#f59e0b" },
+            { label: "Revenue Collected", value: fmt(totalRevenue), icon: Wallet, color: "#06b6d4" },
+          ].map((s) => (
+            <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px", display: "flex", alignItems: "center", gap: isMobile ? "10px" : "14px" }}>
+              <div style={{ width: isMobile ? "36px" : "44px", height: isMobile ? "36px" : "44px", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", background: s.color + "22", flexShrink: 0 }}>
+                <s.icon size={isMobile ? 16 : 20} color={s.color} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ fontSize: isMobile ? "16px" : "22px", fontWeight: "700", color: "#f0f0f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</p>
+                <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>{s.label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Guest Charts Row */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? "12px" : "16px" }}>
+        {/* Booking Status Pie */}
+        <div style={styles.chartCard}>
+          <h3 style={styles.chartTitle}>Bookings by Status</h3>
+          {bookingStatusData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={bookingStatusData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3} dataKey="value">
+                  {bookingStatusData.map((_, i) => (
+                    <Cell key={i} fill={STATUS_PIE_COLORS[i % STATUS_PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }} formatter={(v, n) => [v + " bookings", n]} />
+                <Legend wrapperStyle={{ fontSize: 11, color: "#888" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height: "200px", display: "flex", alignItems: "center", justifyContent: "center", color: "#333", fontSize: "13px" }}>No bookings yet</div>
+          )}
+        </div>
+
+        {/* Recent Bookings */}
+        <div style={styles.chartCard}>
+          <h3 style={styles.chartTitle}>Recent Bookings</h3>
+          {recentBookings.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {recentBookings.map((b) => (
+                <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", background: "#1a1a1a", borderRadius: "8px" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontSize: "13px", color: "#e0e0e0", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</p>
+                    <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>{b.check_in} → {b.check_out}</p>
+                  </div>
+                  <span style={{ fontSize: "11px", fontWeight: "600", color: STATUS_COLOR[b.status] || "#888", background: (STATUS_COLOR[b.status] || "#888") + "18", padding: "3px 8px", borderRadius: "6px", flexShrink: 0, marginLeft: "8px" }}>
+                    {b.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ height: "160px", display: "flex", alignItems: "center", justifyContent: "center", color: "#333", fontSize: "13px" }}>No bookings yet</div>
+          )}
         </div>
       </div>
 

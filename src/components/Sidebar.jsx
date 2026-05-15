@@ -11,11 +11,11 @@ import { useApp } from "../context/AppContext";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "expenses", label: "Expenses", icon: Receipt },
+  { id: "bookings", label: "Guest Bookings", icon: CalendarDays },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "expenses", label: "Expenses", icon: Receipt },
   { id: "settlement", label: "Settlement", icon: ArrowLeftRight },
   { id: "todo", label: "Todo", icon: ListTodo },
-  { id: "bookings", label: "Guest Bookings", icon: CalendarDays },
 ];
 
 export default function Sidebar({ active, setActive, isMobile, open }) {

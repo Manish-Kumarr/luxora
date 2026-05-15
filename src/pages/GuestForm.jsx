@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
+import { useWindowWidth } from "../hooks/useWindowWidth";
 
 const ADDONS = [
   {
@@ -89,6 +90,8 @@ const STATUS_COLORS = {
 };
 
 export default function GuestForm() {
+  const width = useWindowWidth();
+  const isMobile = width < 640;
   const [form, setForm] = useState({
     name: "",
     phone: "",
@@ -223,7 +226,7 @@ export default function GuestForm() {
           {/* Basic Details */}
           <div style={styles.section}>
             <p style={styles.sectionLabel}>BASIC DETAILS</p>
-            <div style={styles.grid2}>
+            <div style={{ ...styles.grid2, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
               <div style={styles.field}>
                 <label style={styles.label}>Full Name <span style={styles.req}>*</span></label>
                 <input
@@ -295,7 +298,7 @@ export default function GuestForm() {
             <p style={{ color: "#555", fontSize: "13px", marginBottom: "16px" }}>
               Select any additional services you'd like during your stay
             </p>
-            <div style={styles.addonGrid}>
+            <div style={{ ...styles.addonGrid, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
               {ADDONS.map((addon) => {
                 const active = selectedAddons.includes(addon.id);
                 return (
