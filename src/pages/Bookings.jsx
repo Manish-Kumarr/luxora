@@ -92,11 +92,13 @@ export default function Bookings({ isMobile }) {
     return total;
   };
 
+  const MAX_DISCOUNT = 200;
+
   const getBookingFinancials = (b) => {
     const roomRaw = calcRoomCost(b.check_in, b.check_out);
     const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
     const totalDiscountPct = (b.discount || 0) + (b.promo_discount || 0);
-    const discountAmt = Math.round((roomRaw + addonRaw) * totalDiscountPct / 100);
+    const discountAmt = Math.min(Math.round((roomRaw + addonRaw) * totalDiscountPct / 100), MAX_DISCOUNT);
     const totalDue = roomRaw + addonRaw - discountAmt;
     const totalPaid = payments.filter((p) => p.booking_id === b.id).reduce((s, p) => s + (p.amount || 0), 0);
     const balance = totalDue - totalPaid;
@@ -851,13 +853,16 @@ export default function Bookings({ isMobile }) {
                           </div>
                         )}
                         {fin.totalDiscountPct > 0 && (
-                          <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span style={{ color: "#10b981" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <span style={{ color: "#10b981", lineHeight: "1.5" }}>
                               Discount ({fin.totalDiscountPct}%
                               {b.discount > 0 ? ` — ${b.discount}% first-time` : ""}
                               {b.promo_code ? ` + ${b.promo_discount}% ${b.promo_code}` : ""})
+                              {Math.round((calcRoomCost(b.check_in, b.check_out) + (b.addons||[]).reduce((s,a)=>s+(a.price||0),0)) * fin.totalDiscountPct / 100) > MAX_DISCOUNT && (
+                                <span style={{ display: "block", fontSize: "11px", opacity: 0.7 }}>Upto ₹{MAX_DISCOUNT} off</span>
+                              )}
                             </span>
-                            <span style={{ color: "#10b981" }}>−{fmtR(fin.discountAmt)}</span>
+                            <span style={{ color: "#10b981", flexShrink: 0, marginLeft: "8px" }}>−{fmtR(fin.discountAmt)}</span>
                           </div>
                         )}
                         <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #1e1e1e", paddingTop: "6px", fontWeight: "700" }}>

@@ -181,6 +181,8 @@ export default function GuestForm() {
     );
   };
 
+  const MAX_DISCOUNT = 200;
+
   const rawAddonCost = ADDONS.filter((a) =>
     selectedAddons.includes(a.id)
   ).reduce((sum, a) => sum + a.price, 0);
@@ -201,7 +203,6 @@ export default function GuestForm() {
       setPromoError("Invalid promo code for your number.");
     }
   };
-  const totalCost = Math.round(rawAddonCost * (1 - discountPct / 100));
 
   const calcRoomCost = (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return null;
@@ -212,11 +213,8 @@ export default function GuestForm() {
     let nights = 0;
     const cur = new Date(start);
     while (cur < end) {
-      const day = cur.getDay(); // 0=Sun,5=Fri,6=Sat
-      total +=
-        day === 0 || day === 5 || day === 6
-          ? rates.weekend_rate
-          : rates.weekday_rate;
+      const day = cur.getDay();
+      total += (day === 0 || day === 5 || day === 6) ? rates.weekend_rate : rates.weekday_rate;
       nights++;
       cur.setDate(cur.getDate() + 1);
     }
@@ -224,11 +222,14 @@ export default function GuestForm() {
   };
   const roomCalc = calcRoomCost(form.check_in, form.check_out);
   const roomCostRaw = roomCalc ? roomCalc.total : null;
-  const roomCostFinal =
-    roomCostRaw !== null
-      ? Math.round(roomCostRaw * (1 - discountPct / 100))
-      : null;
-  const grandTotal = roomCostFinal !== null ? roomCostFinal + totalCost : null;
+
+  // Cap total discount at ₹150
+  const totalRaw = (roomCostRaw || 0) + rawAddonCost;
+  const discountAmtUncapped = Math.round(totalRaw * discountPct / 100);
+  const discountAmt = Math.min(discountAmtUncapped, MAX_DISCOUNT);
+  const isCapped = discountPct > 0 && discountAmtUncapped > MAX_DISCOUNT;
+
+  const grandTotal = totalRaw > 0 ? totalRaw - discountAmt : null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -697,229 +698,72 @@ export default function GuestForm() {
 
           {/* Summary + Submit */}
           {(roomCalc || selectedAddons.length > 0) && (
-            <div
-              style={{
-                ...styles.summary,
-                flexDirection: "column",
-                gap: "10px",
-                alignItems: "stretch",
-              }}
-            >
-              <p
-                style={{
-                  fontSize: "11px",
-                  fontWeight: "700",
-                  color: "#444",
-                  letterSpacing: "0.08em",
-                }}
-              >
-                COST SUMMARY
-              </p>
+            <div style={{ ...styles.summary, flexDirection: "column", gap: "8px", alignItems: "stretch" }}>
+              <p style={{ fontSize: "11px", fontWeight: "700", color: "#444", letterSpacing: "0.08em" }}>COST SUMMARY</p>
 
-              {/* Room cost rows */}
-              {roomCalc && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "4px",
-                  }}
-                >
-                  {(() => {
-                    // breakdown by type
-                    const start = new Date(form.check_in);
-                    const end = new Date(form.check_out);
-                    let wdNights = 0,
-                      weNights = 0;
-                    const cur = new Date(start);
-                    while (cur < end) {
-                      const d = cur.getDay();
-                      if (d === 0 || d === 5 || d === 6) weNights++;
-                      else wdNights++;
-                      cur.setDate(cur.getDate() + 1);
-                    }
-                    return (
-                      <>
-                        {wdNights > 0 && (
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                            }}
-                          >
-                            <span style={{ color: "#666", fontSize: "13px" }}>
-                              Mon–Thu × {wdNights} night
-                              {wdNights > 1 ? "s" : ""}
-                            </span>
-                            <span style={{ color: "#ccc", fontSize: "13px" }}>
-                              ₹
-                              {(wdNights * rates.weekday_rate).toLocaleString(
-                                "en-IN"
-                              )}
-                            </span>
-                          </div>
-                        )}
-                        {weNights > 0 && (
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                            }}
-                          >
-                            <span style={{ color: "#666", fontSize: "13px" }}>
-                              Fri–Sun × {weNights} night
-                              {weNights > 1 ? "s" : ""}
-                            </span>
-                            <span style={{ color: "#ccc", fontSize: "13px" }}>
-                              ₹
-                              {(weNights * rates.weekend_rate).toLocaleString(
-                                "en-IN"
-                              )}
-                            </span>
-                          </div>
-                        )}
-                        {isFirstTime && (
-                          <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span style={{ color: "#10b981", fontSize: "12px" }}>First-time {firstTimePct}% off</span>
-                            <span style={{ color: "#10b981", fontSize: "12px" }}>
-                              −₹{Math.round(roomCostRaw * firstTimePct / 100).toLocaleString("en-IN")}
-                            </span>
-                          </div>
-                        )}
-                        {promoApplied && assignedPromo && (
-                          <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span style={{ color: "#10b981", fontSize: "12px" }}>{assignedPromo.promo_code} ({assignedPromo.discount_percent}% off)</span>
-                            <span style={{ color: "#10b981", fontSize: "12px" }}>
-                              −₹{Math.round(roomCostRaw * promoPct / 100).toLocaleString("en-IN")}
-                            </span>
-                          </div>
-                        )}
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            borderTop: "1px solid #1e1e1e",
-                            paddingTop: "6px",
-                          }}
-                        >
-                          <span
-                            style={{
-                              color: "#888",
-                              fontSize: "13px",
-                              fontWeight: "600",
-                            }}
-                          >
-                            Room Total ({roomCalc.nights} nights)
-                          </span>
-                          <span
-                            style={{
-                              color: "#f0f0f0",
-                              fontSize: "13px",
-                              fontWeight: "700",
-                            }}
-                          >
-                            ₹{roomCostFinal.toLocaleString("en-IN")}
-                          </span>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              )}
+              {/* Room nights breakdown */}
+              {roomCalc && (() => {
+                const start = new Date(form.check_in);
+                const end = new Date(form.check_out);
+                let wdN = 0, weN = 0;
+                const cur = new Date(start);
+                while (cur < end) {
+                  const d = cur.getDay();
+                  if (d === 0 || d === 5 || d === 6) weN++; else wdN++;
+                  cur.setDate(cur.getDate() + 1);
+                }
+                return (
+                  <>
+                    {wdN > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ color: "#666", fontSize: "13px" }}>Mon–Thu × {wdN} night{wdN > 1 ? "s" : ""}</span>
+                        <span style={{ color: "#ccc", fontSize: "13px" }}>₹{(wdN * rates.weekday_rate).toLocaleString("en-IN")}</span>
+                      </div>
+                    )}
+                    {weN > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ color: "#666", fontSize: "13px" }}>Fri–Sun × {weN} night{weN > 1 ? "s" : ""}</span>
+                        <span style={{ color: "#ccc", fontSize: "13px" }}>₹{(weN * rates.weekend_rate).toLocaleString("en-IN")}</span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
-              {/* Add-ons */}
+              {/* Add-ons line */}
               {selectedAddons.length > 0 && (
-                <div style={{ borderTop: "1px solid #1e1e1e", paddingTop: "6px", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: "#888", fontSize: "13px" }}>Add-ons est. ({selectedAddons.length})</span>
-                    <span style={{ color: "#ccc", fontSize: "13px" }}>~₹{rawAddonCost.toLocaleString("en-IN")}</span>
-                  </div>
-                  {isFirstTime && (
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ color: "#10b981", fontSize: "12px" }}>First-time {firstTimePct}% off</span>
-                      <span style={{ color: "#10b981", fontSize: "12px" }}>−₹{Math.round(rawAddonCost * firstTimePct / 100).toLocaleString("en-IN")}</span>
-                    </div>
-                  )}
-                  {promoApplied && assignedPromo && (
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ color: "#10b981", fontSize: "12px" }}>{assignedPromo.promo_code} ({assignedPromo.discount_percent}% off)</span>
-                      <span style={{ color: "#10b981", fontSize: "12px" }}>−₹{Math.round(rawAddonCost * promoPct / 100).toLocaleString("en-IN")}</span>
-                    </div>
-                  )}
-                  {discountPct > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ color: "#888", fontSize: "13px", fontWeight: "600" }}>Add-ons after discount</span>
-                      <span style={{ color: "#ccc", fontSize: "13px", fontWeight: "600" }}>~₹{totalCost.toLocaleString("en-IN")}</span>
-                    </div>
-                  )}
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "#666", fontSize: "13px" }}>Add-ons est. ({selectedAddons.length})</span>
+                  <span style={{ color: "#ccc", fontSize: "13px" }}>~₹{rawAddonCost.toLocaleString("en-IN")}</span>
                 </div>
               )}
 
-              {/* Grand total */}
-              {grandTotal !== null && (
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    background: "rgba(0,128,128,0.08)",
-                    border: "1px solid rgba(0,128,128,0.2)",
-                    borderRadius: "8px",
-                    padding: "10px 14px",
-                    marginTop: "4px",
-                  }}
-                >
-                  <span
-                    style={{
-                      color: "#33b5b5",
-                      fontSize: "14px",
-                      fontWeight: "700",
-                    }}
-                  >
-                    Estimated Total
+              {/* Discount line — single combined, capped at ₹150 */}
+              {discountPct > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <span style={{ color: "#10b981", fontSize: "12px", lineHeight: "1.4" }}>
+                    {firstTimePct > 0 && `First-time ${firstTimePct}% off`}
+                    {firstTimePct > 0 && promoPct > 0 && " + "}
+                    {promoPct > 0 && `${assignedPromo.promo_code} ${promoPct}% off`}
+                    {isCapped && (
+                      <span style={{ display: "block", fontSize: "11px", color: "#10b981", opacity: 0.7 }}>Upto ₹{MAX_DISCOUNT} off</span>
+                    )}
                   </span>
-                  <span
-                    style={{
-                      color: "#33b5b5",
-                      fontSize: "16px",
-                      fontWeight: "800",
-                    }}
-                  >
-                    ₹{grandTotal.toLocaleString("en-IN")}
+                  <span style={{ color: "#10b981", fontSize: "12px", fontWeight: "600", flexShrink: 0, marginLeft: "8px" }}>
+                    −₹{discountAmt.toLocaleString("en-IN")}
                   </span>
                 </div>
               )}
-              {grandTotal === null && selectedAddons.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    background: "rgba(0,128,128,0.08)",
-                    border: "1px solid rgba(0,128,128,0.2)",
-                    borderRadius: "8px",
-                    padding: "10px 14px",
-                    marginTop: "4px",
-                  }}
-                >
-                  <span
-                    style={{
-                      color: "#33b5b5",
-                      fontSize: "14px",
-                      fontWeight: "700",
-                    }}
-                  >
-                    Add-ons Est.
-                  </span>
-                  <span
-                    style={{
-                      color: "#33b5b5",
-                      fontSize: "16px",
-                      fontWeight: "800",
-                    }}
-                  >
-                    ~₹{totalCost.toLocaleString("en-IN")}
+
+              {/* Divider + Grand Total */}
+              <div style={{ borderTop: "1px solid #1e1e1e", paddingTop: "8px", marginTop: "2px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", background: "rgba(0,128,128,0.08)", border: "1px solid rgba(0,128,128,0.2)", borderRadius: "8px", padding: "10px 14px" }}>
+                  <span style={{ color: "#33b5b5", fontSize: "14px", fontWeight: "700" }}>Estimated Total</span>
+                  <span style={{ color: "#33b5b5", fontSize: "16px", fontWeight: "800" }}>
+                    ₹{grandTotal !== null ? grandTotal.toLocaleString("en-IN") : ("~₹" + rawAddonCost.toLocaleString("en-IN"))}
                   </span>
                 </div>
-              )}
+              </div>
             </div>
           )}
 
