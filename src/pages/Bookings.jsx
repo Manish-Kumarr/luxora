@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Pencil,
   Trash2,
@@ -8,15 +8,19 @@ import {
   FileText,
   MessageCircle,
   LayoutList,
+  Upload,
+  RefreshCw,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import { supabase } from "../lib/supabase";
 
-const STATUS_OPTIONS = ["pending", "confirmed", "checked-in", "checked-out"];
+const STATUS_OPTIONS = ["pending", "confirmed", "checked-in", "checked-out", "cancelled"];
 const STATUS_COLORS = {
   pending: { color: "#f59e0b", bg: "#f59e0b18", border: "#f59e0b40" },
   confirmed: { color: "#33b5b5", bg: "#33b5b518", border: "#33b5b540" },
   "checked-in": { color: "#10b981", bg: "#10b98118", border: "#10b98140" },
   "checked-out": { color: "#555", bg: "#55555518", border: "#55555540" },
+  cancelled: { color: "#ef4444", bg: "#ef444418", border: "#ef444440" },
 };
 
 const PAYMENT_METHODS = ["Cash", "UPI", "Card"];
@@ -64,7 +68,42 @@ export default function Bookings({ isMobile }) {
     addPayment,
     deletePayment,
     getDocUrls,
+    roomRates,
+    promoCodes,
+    applyPromoToBooking,
   } = useApp();
+
+  const [promoBookingId, setPromoBookingId] = useState(null);
+  const [promoSelected, setPromoSelected] = useState("");
+  const [promoApplying, setPromoApplying] = useState(false);
+
+  const calcRoomCost = (checkIn, checkOut) => {
+    if (!checkIn || !checkOut) return 0;
+    const start = new Date(checkIn);
+    const end = new Date(checkOut);
+    if (end <= start) return 0;
+    let total = 0;
+    const cur = new Date(start);
+    while (cur < end) {
+      const day = cur.getDay();
+      total += (day === 0 || day === 5 || day === 6) ? roomRates.weekend_rate : roomRates.weekday_rate;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return total;
+  };
+
+  const getBookingFinancials = (b) => {
+    const roomRaw = calcRoomCost(b.check_in, b.check_out);
+    const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
+    const totalDiscountPct = (b.discount || 0) + (b.promo_discount || 0);
+    const discountAmt = Math.round((roomRaw + addonRaw) * totalDiscountPct / 100);
+    const totalDue = roomRaw + addonRaw - discountAmt;
+    const totalPaid = payments.filter((p) => p.booking_id === b.id).reduce((s, p) => s + (p.amount || 0), 0);
+    const balance = totalDue - totalPaid;
+    return { roomRaw, addonRaw, totalDiscountPct, discountAmt, totalDue, totalPaid, balance };
+  };
+
+  const fmtR = (n) => "₹" + Number(n).toLocaleString("en-IN");
 
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState(BLANK_EDIT);
@@ -84,13 +123,48 @@ export default function Bookings({ isMobile }) {
   const [statusConfirm, setStatusConfirm] = useState(null); // { bookingId, status, name }
 
   // Docs modal
-  const [docsModal, setDocsModal] = useState(null); // { front, back }
+  const [docsModal, setDocsModal] = useState(null); // { front, back, bookingId }
+  const [docOps, setDocOps] = useState({}); // { front: 'deleting'|'uploading', back: ... }
+  const frontInputRef = useRef(null);
+  const backInputRef = useRef(null);
+
+  const handleDocDelete = async (side) => {
+    if (!docsModal?.bookingId) return;
+    setDocOps((p) => ({ ...p, [side]: "deleting" }));
+    const path = `${docsModal.bookingId}/aadhaar_${side}`;
+    await supabase.storage.from("documents").remove([path]);
+    // Check if both sides are now gone
+    const otherSide = side === "front" ? "back" : "front";
+    const { data: list } = await supabase.storage.from("documents").list(docsModal.bookingId);
+    const otherExists = list?.some((f) => f.name === `aadhaar_${otherSide}`);
+    if (!otherExists) {
+      await updateBooking(docsModal.bookingId, { docs_status: "pending" });
+    }
+    // Update local modal state
+    setDocsModal((prev) => ({ ...prev, [side]: null }));
+    setDocOps((p) => ({ ...p, [side]: null }));
+  };
+
+  const handleDocReplace = async (side, file) => {
+    if (!file || !docsModal?.bookingId) return;
+    setDocOps((p) => ({ ...p, [side]: "uploading" }));
+    const path = `${docsModal.bookingId}/aadhaar_${side}`;
+    await supabase.storage.from("documents").upload(path, file, { upsert: true });
+    const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
+    const freshUrl = urlData.publicUrl + "?t=" + Date.now();
+    setDocsModal((prev) => ({ ...prev, [side]: freshUrl }));
+    setDocOps((p) => ({ ...p, [side]: null }));
+  };
 
   // Addon modal
   const [addonModal, setAddonModal] = useState(null); // { bookingId, addons[] }
   const [customLabel, setCustomLabel] = useState("");
   const [customPrice, setCustomPrice] = useState("");
   const [addonSaving, setAddonSaving] = useState(false);
+
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const pad = isMobile ? "16px" : "32px";
   const gap = isMobile ? "14px" : "24px";
@@ -226,19 +300,45 @@ export default function Bookings({ isMobile }) {
       style={{ padding: pad, display: "flex", flexDirection: "column", gap }}
     >
       {/* Header */}
-      <div>
-        <h1
-          style={{
-            fontSize: isMobile ? "20px" : "26px",
-            fontWeight: "700",
-            color: "#f0f0f0",
-          }}
-        >
-          Guest Bookings
-        </h1>
-        <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>
-          {bookings.length} total request{bookings.length !== 1 ? "s" : ""}
-        </p>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "flex-start" : "center", justifyContent: "space-between", gap: "12px" }}>
+        <div>
+          <h1 style={{ fontSize: isMobile ? "20px" : "26px", fontWeight: "700", color: "#f0f0f0" }}>
+            Guest Bookings
+          </h1>
+          <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>
+            {bookings.length} total request{bookings.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", width: isMobile ? "100%" : "auto" }}>
+          <input
+            type="text"
+            placeholder="Search by name, phone or email..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "9px 14px", color: "#e0e0e0", fontSize: "13px", outline: "none", width: isMobile ? "100%" : "280px", boxSizing: "border-box" }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              style={{ flex: 1, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "7px 10px", color: dateFrom ? "#e0e0e0" : "#555", fontSize: "12px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}
+            />
+            <span style={{ color: "#444", fontSize: "12px", flexShrink: 0 }}>to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              style={{ flex: 1, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "7px 10px", color: dateTo ? "#e0e0e0" : "#555", fontSize: "12px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(""); setDateTo(""); }}
+                style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: "16px", padding: "0 2px", flexShrink: 0 }}
+              >×</button>
+            )}
+          </div>
+        </div>
       </div>
 
       {bookingsLoading && (
@@ -269,7 +369,20 @@ export default function Bookings({ isMobile }) {
 
       {/* Booking Cards */}
       {!bookingsLoading &&
-        bookings.map((b) => {
+        bookings
+        .filter((b) => {
+          const q = search.trim().toLowerCase();
+          if (q && !(
+            (b.name || "").toLowerCase().includes(q) ||
+            (b.phone || "").toLowerCase().includes(q) ||
+            (b.email || "").toLowerCase().includes(q)
+          )) return false;
+          const submittedDate = b.created_at ? b.created_at.slice(0, 10) : "";
+          if (dateFrom && submittedDate < dateFrom) return false;
+          if (dateTo && submittedDate > dateTo) return false;
+          return true;
+        })
+        .map((b) => {
           const s = STATUS_COLORS[b.status] || STATUS_COLORS.pending;
           const totalAddonCost = (b.addons || []).reduce(
             (sum, a) => sum + (a.price || 0),
@@ -362,6 +475,11 @@ export default function Bookings({ isMobile }) {
                           ? "Docs ✓"
                           : "Docs Pending"}
                       </span>
+                      {b.discount > 0 && (
+                        <span style={{ fontSize: "10px", fontWeight: "700", padding: "2px 8px", borderRadius: "20px", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.3)", color: "#10b981" }}>
+                          {b.discount}% off
+                        </span>
+                      )}
                     </div>
                     <p style={{ color: "#555", fontSize: "12px" }}>
                       {b.phone}
@@ -407,7 +525,7 @@ export default function Bookings({ isMobile }) {
                   </select>
                   {b.docs_status === "received" ? (
                     <button
-                      onClick={() => setDocsModal(getDocUrls(b.id))}
+                      onClick={() => setDocsModal({ ...getDocUrls(b.id), bookingId: b.id })}
                       style={{
                         background: "none",
                         border: "none",
@@ -446,6 +564,15 @@ export default function Bookings({ isMobile }) {
                       title="Send upload link on WhatsApp"
                     >
                       <MessageCircle size={15} />
+                    </button>
+                  )}
+                  {b.docs_status !== "received" && (
+                    <button
+                      onClick={() => window.open(`${window.location.origin}/upload?id=${b.id}`, "_blank")}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#888", display: "flex", padding: "4px" }}
+                      title="Open upload link directly"
+                    >
+                      <Upload size={15} />
                     </button>
                   )}
                   <button
@@ -604,7 +731,7 @@ export default function Bookings({ isMobile }) {
                           padding: "8px 14px",
                         }}
                       >
-                        <span>🟢</span>
+                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", display: "inline-block", flexShrink: 0 }} />
                         <div>
                           <p
                             style={{
@@ -640,7 +767,7 @@ export default function Bookings({ isMobile }) {
                           padding: "8px 14px",
                         }}
                       >
-                        <span>🔴</span>
+                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444", display: "inline-block", flexShrink: 0 }} />
                         <div>
                           <p
                             style={{
@@ -698,6 +825,98 @@ export default function Bookings({ isMobile }) {
                     </p>
                   </div>
                 )}
+
+                {/* ── Financial Summary ── */}
+                {(() => {
+                  const fin = getBookingFinancials(b);
+                  const nights = (() => {
+                    if (!b.check_in || !b.check_out) return 0;
+                    const diff = new Date(b.check_out) - new Date(b.check_in);
+                    return Math.max(0, Math.round(diff / 86400000));
+                  })();
+                  return (
+                    <div style={{ borderTop: "1px solid #1a1a1a", paddingTop: "14px", marginBottom: "14px" }}>
+                      <p style={{ fontSize: "11px", fontWeight: "700", color: "#444", letterSpacing: "0.08em", marginBottom: "10px" }}>BILLING</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "5px", fontSize: "13px" }}>
+                        {nights > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span style={{ color: "#666" }}>Room ({nights} night{nights > 1 ? "s" : ""})</span>
+                            <span style={{ color: "#ccc" }}>{fmtR(fin.roomRaw)}</span>
+                          </div>
+                        )}
+                        {fin.addonRaw > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span style={{ color: "#666" }}>Add-ons ({(b.addons || []).length})</span>
+                            <span style={{ color: "#ccc" }}>{fmtR(fin.addonRaw)}</span>
+                          </div>
+                        )}
+                        {fin.totalDiscountPct > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span style={{ color: "#10b981" }}>
+                              Discount ({fin.totalDiscountPct}%
+                              {b.discount > 0 ? ` — ${b.discount}% first-time` : ""}
+                              {b.promo_code ? ` + ${b.promo_discount}% ${b.promo_code}` : ""})
+                            </span>
+                            <span style={{ color: "#10b981" }}>−{fmtR(fin.discountAmt)}</span>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #1e1e1e", paddingTop: "6px", fontWeight: "700" }}>
+                          <span style={{ color: "#888" }}>Total Due</span>
+                          <span style={{ color: "#f0f0f0" }}>{fmtR(fin.totalDue)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ color: "#666" }}>Paid</span>
+                          <span style={{ color: "#10b981", fontWeight: "600" }}>{fmtR(fin.totalPaid)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", background: fin.balance <= 0 ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)", border: `1px solid ${fin.balance <= 0 ? "rgba(16,185,129,0.25)" : "rgba(239,68,68,0.25)"}`, borderRadius: "7px", padding: "7px 10px", marginTop: "2px" }}>
+                          <span style={{ color: fin.balance <= 0 ? "#10b981" : "#ef4444", fontWeight: "700", fontSize: "13px" }}>
+                            {fin.balance <= 0 ? "Cleared" : "Balance Due"}
+                          </span>
+                          <span style={{ color: fin.balance <= 0 ? "#10b981" : "#ef4444", fontWeight: "800", fontSize: "14px" }}>
+                            {fin.balance <= 0 ? fmtR(0) : fmtR(fin.balance)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Promo Code */}
+                      <div style={{ marginTop: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "11px", color: "#555", fontWeight: "600", flexShrink: 0 }}>Promo:</span>
+                        {promoBookingId === b.id ? (
+                          <>
+                            <select
+                              value={promoSelected}
+                              onChange={(e) => setPromoSelected(e.target.value)}
+                              style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", color: "#e0e0e0", fontSize: "12px", padding: "5px 8px", flex: 1, colorScheme: "dark" }}
+                            >
+                              <option value="">— No promo —</option>
+                              {promoCodes.filter((p) => p.active).map((p) => (
+                                <option key={p.code} value={p.code}>{p.code} ({p.discount_percent}% off)</option>
+                              ))}
+                            </select>
+                            <button
+                              disabled={promoApplying}
+                              onClick={async () => {
+                                setPromoApplying(true);
+                                await applyPromoToBooking(b.id, promoSelected || null);
+                                setPromoApplying(false);
+                                setPromoBookingId(null);
+                              }}
+                              style={{ background: "rgba(0,128,128,0.15)", border: "1px solid rgba(0,128,128,0.4)", borderRadius: "6px", color: "#33b5b5", fontSize: "12px", fontWeight: "700", padding: "5px 10px", cursor: "pointer", flexShrink: 0 }}
+                            >{promoApplying ? "..." : "Save"}</button>
+                            <button onClick={() => setPromoBookingId(null)} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: "16px", padding: "0 4px" }}>×</button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => { setPromoBookingId(b.id); setPromoSelected(b.promo_code || ""); }}
+                            style={{ background: "none", border: "1px solid #2a2a2a", borderRadius: "6px", color: b.promo_code ? "#33b5b5" : "#555", fontSize: "12px", padding: "4px 10px", cursor: "pointer" }}
+                          >
+                            {b.promo_code ? `${b.promo_code} (${b.promo_discount}% off)` : "Apply promo"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* ── Payments Section ── */}
                 <div
@@ -1567,94 +1786,64 @@ export default function Bookings({ isMobile }) {
                 <X size={18} />
               </button>
             </div>
-            <div
-              style={{
-                padding: "20px",
-                display: "flex",
-                flexDirection: "column",
-                gap: "14px",
-              }}
-            >
-              <div>
-                <p
-                  style={{
-                    fontSize: "11px",
-                    color: "#555",
-                    fontWeight: "600",
-                    marginBottom: "8px",
-                  }}
-                >
-                  FRONT SIDE
-                </p>
-                <img
-                  src={docsModal.front}
-                  alt="Aadhaar Front"
-                  style={{
-                    width: "100%",
-                    borderRadius: "8px",
-                    border: "1px solid #2a2a2a",
-                    objectFit: "contain",
-                    maxHeight: "200px",
-                    background: "#1a1a1a",
-                  }}
-                  onError={(e) => {
-                    e.target.style.display = "none";
-                  }}
-                />
-                <a
-                  href={docsModal.front}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    color: "#33b5b5",
-                    marginTop: "6px",
-                  }}
-                >
-                  Open full image ↗
-                </a>
-              </div>
-              <div>
-                <p
-                  style={{
-                    fontSize: "11px",
-                    color: "#555",
-                    fontWeight: "600",
-                    marginBottom: "8px",
-                  }}
-                >
-                  BACK SIDE
-                </p>
-                <img
-                  src={docsModal.back}
-                  alt="Aadhaar Back"
-                  style={{
-                    width: "100%",
-                    borderRadius: "8px",
-                    border: "1px solid #2a2a2a",
-                    objectFit: "contain",
-                    maxHeight: "200px",
-                    background: "#1a1a1a",
-                  }}
-                  onError={(e) => {
-                    e.target.style.display = "none";
-                  }}
-                />
-                <a
-                  href={docsModal.back}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    color: "#33b5b5",
-                    marginTop: "6px",
-                  }}
-                >
-                  Open full image ↗
-                </a>
-              </div>
+            <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "20px" }}>
+              {/* Hidden file inputs */}
+              <input ref={frontInputRef} type="file" accept="image/*,.pdf" style={{ display: "none" }}
+                onChange={(e) => { if (e.target.files[0]) handleDocReplace("front", e.target.files[0]); e.target.value = ""; }} />
+              <input ref={backInputRef} type="file" accept="image/*,.pdf" style={{ display: "none" }}
+                onChange={(e) => { if (e.target.files[0]) handleDocReplace("back", e.target.files[0]); e.target.value = ""; }} />
+
+              {["front", "back"].map((side) => {
+                const url = docsModal[side];
+                const op = docOps[side];
+                const inputRef = side === "front" ? frontInputRef : backInputRef;
+                return (
+                  <div key={side}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                      <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", letterSpacing: "0.06em" }}>
+                        {side === "front" ? "FRONT SIDE" : "BACK SIDE"}
+                      </p>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          onClick={() => inputRef.current?.click()}
+                          disabled={!!op}
+                          title="Replace"
+                          style={{ display: "flex", alignItems: "center", gap: "4px", padding: "4px 10px", background: "rgba(0,128,128,0.1)", border: "1px solid rgba(0,128,128,0.3)", borderRadius: "6px", color: "#33b5b5", fontSize: "11px", fontWeight: "600", cursor: "pointer", opacity: op ? 0.5 : 1 }}
+                        >
+                          <RefreshCw size={11} />
+                          {op === "uploading" ? "Uploading..." : "Replace"}
+                        </button>
+                        <button
+                          onClick={() => handleDocDelete(side)}
+                          disabled={!!op || !url}
+                          title="Delete"
+                          style={{ display: "flex", alignItems: "center", gap: "4px", padding: "4px 10px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "6px", color: "#ef4444", fontSize: "11px", fontWeight: "600", cursor: "pointer", opacity: (op || !url) ? 0.4 : 1 }}
+                        >
+                          <Trash2 size={11} />
+                          {op === "deleting" ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                    {url ? (
+                      <>
+                        <img
+                          src={url}
+                          alt={`Aadhaar ${side}`}
+                          style={{ width: "100%", borderRadius: "8px", border: "1px solid #2a2a2a", objectFit: "contain", maxHeight: "200px", background: "#1a1a1a" }}
+                          onError={(e) => { e.target.style.display = "none"; }}
+                        />
+                        <a href={url} target="_blank" rel="noreferrer" style={{ display: "block", fontSize: "12px", color: "#33b5b5", marginTop: "6px" }}>
+                          Open full image ↗
+                        </a>
+                      </>
+                    ) : (
+                      <div style={{ background: "#1a1a1a", border: "1px dashed #2a2a2a", borderRadius: "8px", padding: "32px", textAlign: "center", color: "#444", fontSize: "13px" }}>
+                        No image — deleted or not uploaded
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1685,8 +1874,8 @@ export default function Bookings({ isMobile }) {
               textAlign: "center",
             }}
           >
-            <div style={{ fontSize: "40px", marginBottom: "14px" }}>
-              {statusConfirm.status === "checked-in" ? "🟢" : "🔴"}
+            <div style={{ marginBottom: "14px" }}>
+              <span style={{ width: "14px", height: "14px", borderRadius: "50%", background: statusConfirm.status === "checked-in" ? "#10b981" : "#ef4444", display: "inline-block" }} />
             </div>
             <p
               style={{

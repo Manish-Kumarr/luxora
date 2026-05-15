@@ -5,13 +5,23 @@ import {
 } from "recharts";
 
 const COLORS = ["#008080", "#00a0a0", "#06b6d4", "#10b981", "#f59e0b", "#ef4444"];
-const STATUS_PIE_COLORS = ["#f59e0b", "#33b5b5", "#10b981", "#555"];
+
+const STATUS_ORDER = ["Pending", "Confirmed", "Checked-in", "Checked-out", "Cancelled"];
+const STATUS_PIE_COLORS = {
+  Pending: "#f59e0b",
+  Confirmed: "#33b5b5",
+  "Checked-in": "#10b981",
+  "Checked-out": "#555",
+  Cancelled: "#ef4444",
+};
 
 export default function Analytics({ isMobile }) {
   const { expenses, bookings, payments } = useApp();
 
   const fmt = (n) => "₹" + Number(n).toLocaleString("en-IN");
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+  // Expense analytics
   const categoryMap = {};
   expenses.forEach((e) => {
     categoryMap[e.category] = (categoryMap[e.category] || 0) + e.totalAmount;
@@ -26,7 +36,6 @@ export default function Analytics({ isMobile }) {
     { name: "Keshaw", amount: expenses.reduce((s, e) => s + (e.keshawPaid || 0), 0) },
   ];
 
-  // Category-wise per member
   const memberCategoryMap = {};
   expenses.forEach((e) => {
     if (!memberCategoryMap[e.category]) memberCategoryMap[e.category] = { category: e.category, Nikhil: 0, Manish: 0, Keshaw: 0 };
@@ -37,7 +46,6 @@ export default function Analytics({ isMobile }) {
   const memberCategoryData = Object.values(memberCategoryMap).sort((a, b) => (b.Nikhil + b.Manish + b.Keshaw) - (a.Nikhil + a.Manish + a.Keshaw));
 
   const monthMap = {};
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   expenses.forEach((e) => {
     const [y, m] = e.date.split("-");
     const key = `${MONTHS[parseInt(m)-1]} ${y}`;
@@ -51,28 +59,31 @@ export default function Analytics({ isMobile }) {
     { name: "Done", value: doneCount },
     { name: "Pending", value: pendingCount },
   ];
-
   const total = expenses.reduce((s, e) => s + e.totalAmount, 0);
 
   // Guest analytics
-  const bookingStatusData = [
-    { name: "Pending", value: bookings.filter((b) => b.status === "pending").length },
-    { name: "Confirmed", value: bookings.filter((b) => b.status === "confirmed").length },
-    { name: "Checked-in", value: bookings.filter((b) => b.status === "checked-in").length },
-    { name: "Checked-out", value: bookings.filter((b) => b.status === "checked-out").length },
-  ].filter((d) => d.value > 0);
+  const cancelledBookings = bookings.filter((b) => b.status === "cancelled");
+  const activeBookings = bookings.filter((b) => b.status !== "cancelled");
+  const cancellationRate = bookings.length > 0 ? ((cancelledBookings.length / bookings.length) * 100).toFixed(1) : "0.0";
+
+  const bookingStatusData = STATUS_ORDER.map((name) => ({
+    name,
+    value: bookings.filter((b) => b.status === name.toLowerCase()).length,
+  })).filter((d) => d.value > 0);
 
   const bookingMonthMap = {};
   bookings.forEach((b) => {
     if (!b.check_in) return;
     const [y, m] = b.check_in.split("-");
     const key = `${MONTHS[parseInt(m)-1]} ${y}`;
-    bookingMonthMap[key] = (bookingMonthMap[key] || 0) + 1;
+    if (!bookingMonthMap[key]) bookingMonthMap[key] = { month: key, total: 0, cancelled: 0 };
+    bookingMonthMap[key].total += 1;
+    if (b.status === "cancelled") bookingMonthMap[key].cancelled += 1;
   });
-  const bookingMonthData = Object.entries(bookingMonthMap).map(([month, count]) => ({ month, count }));
+  const bookingMonthData = Object.values(bookingMonthMap);
 
   const addonMap = {};
-  bookings.forEach((b) => {
+  activeBookings.forEach((b) => {
     (b.addons || []).forEach((a) => {
       addonMap[a.label] = (addonMap[a.label] || 0) + 1;
     });
@@ -89,7 +100,13 @@ export default function Analytics({ isMobile }) {
   const paymentMethodData = Object.entries(paymentMethodMap).map(([name, amount]) => ({ name, amount }));
 
   const totalRevenue = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const totalGuests = bookings.reduce((s, b) => s + (b.guests_count || 1), 0);
+  const totalGuests = activeBookings.reduce((s, b) => s + (b.guests_count || 1), 0);
+  const avgNights = activeBookings.length > 0
+    ? (activeBookings.reduce((s, b) => {
+        if (!b.check_in || !b.check_out) return s;
+        return s + Math.max(0, Math.round((new Date(b.check_out) - new Date(b.check_in)) / 86400000));
+      }, 0) / activeBookings.length).toFixed(1)
+    : "—";
 
   const pad = isMobile ? "16px" : "32px";
   const gap = isMobile ? "14px" : "24px";
@@ -100,24 +117,17 @@ export default function Analytics({ isMobile }) {
     <div style={{ padding: pad, display: "flex", flexDirection: "column", gap }}>
       <div>
         <h1 style={{ fontSize: isMobile ? "20px" : "26px", fontWeight: "700", color: "#f0f0f0" }}>Analytics</h1>
-        <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>Detailed spending breakdown</p>
+        <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>Detailed spending and booking breakdown</p>
       </div>
 
-      {/* Category Breakdown Table */}
+      {/* Expense Category Table */}
       <div>
-        <h2 style={{ fontSize: "15px", fontWeight: "600", color: "#e0e0e0", marginBottom: "12px" }}>
-          Category-wise Spending
-        </h2>
+        <h2 style={{ fontSize: "15px", fontWeight: "600", color: "#e0e0e0", marginBottom: "12px" }}>Category-wise Spending</h2>
         <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: "6px 0" }}>
           {categoryData.map((cat, i) => {
             const pct = total > 0 ? ((cat.value / total) * 100).toFixed(1) : 0;
             return (
-              <div key={cat.name} style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: isMobile ? "12px 14px" : "14px 20px",
-                borderBottom: "1px solid #161616",
-                gap: "8px",
-              }}>
+              <div key={cat.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 20px", borderBottom: "1px solid #161616", gap: "8px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: 0 }}>
                   <div style={{ width: "9px", height: "9px", borderRadius: "50%", background: COLORS[i % COLORS.length], flexShrink: 0 }} />
                   <span style={{ fontSize: "13px", color: "#ccc", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat.name}</span>
@@ -134,38 +144,23 @@ export default function Analytics({ isMobile }) {
               </div>
             );
           })}
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: isMobile ? "12px 14px" : "14px 20px",
-            background: "rgba(0,128,128,0.06)",
-          }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "12px 14px" : "14px 20px", background: "rgba(0,128,128,0.06)" }}>
             <span style={{ color: "#888" }}>Total</span>
             <span style={{ color: "#33b5b5", fontWeight: "700", fontSize: "16px" }}>{fmt(total)}</span>
           </div>
         </div>
       </div>
 
-      {/* Charts Row 1 */}
+      {/* Expense Charts */}
       <div style={{ display: "grid", gridTemplateColumns: cols, gap: isMobile ? "12px" : "16px" }}>
         <div style={styles.chartCard}>
           <h3 style={styles.chartTitle}>Category Distribution</h3>
           <ResponsiveContainer width="100%" height={chartH}>
             <PieChart>
-              <Pie
-                data={categoryData}
-                cx="50%" cy="50%"
-                outerRadius={isMobile ? 70 : 100}
-                paddingAngle={3}
-                dataKey="value"
-              >
-                {categoryData.map((_, i) => (
-                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                ))}
+              <Pie data={categoryData} cx="50%" cy="50%" outerRadius={isMobile ? 70 : 100} paddingAngle={3} dataKey="value">
+                {categoryData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Pie>
-              <Tooltip
-                contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }}
-                formatter={(v) => [fmt(v), "Amount"]}
-              />
+              <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }} formatter={(v) => [fmt(v), "Amount"]} />
               <Legend wrapperStyle={{ fontSize: 12, color: "#888" }} />
             </PieChart>
           </ResponsiveContainer>
@@ -190,7 +185,6 @@ export default function Analytics({ isMobile }) {
       {/* Member Category Breakdown */}
       <div style={styles.chartCard}>
         <h3 style={styles.chartTitle}>Member Spending by Category</h3>
-        <p style={{ fontSize: "12px", color: "#444", marginBottom: "14px" }}>Kitne mein kaun ne kahan kitna lagaya</p>
         {memberCategoryData.length > 0 ? (
           <ResponsiveContainer width="100%" height={isMobile ? 260 : 320}>
             <BarChart data={memberCategoryData} margin={{ left: 0, right: 8 }}>
@@ -208,7 +202,6 @@ export default function Analytics({ isMobile }) {
           <div style={{ height: "200px", display: "flex", alignItems: "center", justifyContent: "center", color: "#333", fontSize: "13px" }}>No data yet</div>
         )}
 
-        {/* Per-member category table */}
         {memberCategoryData.length > 0 && (
           <div style={{ marginTop: "20px", overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
@@ -249,16 +242,17 @@ export default function Analytics({ isMobile }) {
         )}
       </div>
 
-      {/* Guest Bookings Section */}
+      {/* ── Guest Bookings Section ── */}
       <div>
         <h2 style={{ fontSize: isMobile ? "15px" : "17px", fontWeight: "600", color: "#e0e0e0", marginBottom: "12px" }}>Guest Bookings</h2>
+
         {/* Summary strip */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "14px", marginBottom: isMobile ? "12px" : "16px" }}>
           {[
             { label: "Total Bookings", value: bookings.length, color: "#008080" },
             { label: "Total Guests", value: totalGuests, color: "#06b6d4" },
-            { label: "Revenue Collected", value: "₹" + totalRevenue.toLocaleString("en-IN"), color: "#10b981" },
-            { label: "Avg Add-ons/Booking", value: bookings.length ? (bookings.reduce((s,b) => s+(b.addons||[]).length,0)/bookings.length).toFixed(1) : "—", color: "#f59e0b" },
+            { label: "Avg Stay (nights)", value: avgNights, color: "#10b981" },
+            { label: "Cancellation Rate", value: cancellationRate + "%", color: cancelledBookings.length > 0 ? "#ef4444" : "#555" },
           ].map((s) => (
             <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px" }}>
               <p style={{ fontSize: isMobile ? "20px" : "26px", fontWeight: "700", color: s.color }}>{s.value}</p>
@@ -267,15 +261,33 @@ export default function Analytics({ isMobile }) {
           ))}
         </div>
 
+        {/* Revenue strip */}
+        <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px 16px" : "16px 20px", marginBottom: isMobile ? "12px" : "16px", display: "flex", flexWrap: "wrap", gap: "16px", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <p style={{ fontSize: "11px", color: "#555", marginBottom: "4px" }}>Total Revenue Collected</p>
+            <p style={{ fontSize: "22px", fontWeight: "800", color: "#10b981" }}>{fmt(totalRevenue)}</p>
+          </div>
+          <div style={{ display: "flex", gap: isMobile ? "12px" : "24px", flexWrap: "wrap" }}>
+            {paymentMethodData.map((p, i) => (
+              <div key={p.name}>
+                <p style={{ fontSize: "11px", color: "#555", marginBottom: "2px" }}>{p.name}</p>
+                <p style={{ fontSize: "15px", fontWeight: "700", color: COLORS[i % COLORS.length] }}>{fmt(p.amount)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: isMobile ? "12px" : "16px" }}>
-          {/* Booking Status */}
+          {/* Booking Status Pie */}
           <div style={styles.chartCard}>
             <h3 style={styles.chartTitle}>Booking Status</h3>
             {bookingStatusData.length > 0 ? (
               <ResponsiveContainer width="100%" height={chartH}>
                 <PieChart>
                   <Pie data={bookingStatusData} cx="50%" cy="50%" innerRadius={isMobile ? 40 : 55} outerRadius={isMobile ? 70 : 90} paddingAngle={3} dataKey="value">
-                    {bookingStatusData.map((_, i) => <Cell key={i} fill={STATUS_PIE_COLORS[i]} />)}
+                    {bookingStatusData.map((entry, i) => (
+                      <Cell key={i} fill={STATUS_PIE_COLORS[entry.name] || COLORS[i % COLORS.length]} />
+                    ))}
                   </Pie>
                   <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }} formatter={(v, n) => [v + " bookings", n]} />
                   <Legend wrapperStyle={{ fontSize: 12, color: "#888" }} />
@@ -286,7 +298,7 @@ export default function Analytics({ isMobile }) {
             )}
           </div>
 
-          {/* Bookings by Month */}
+          {/* Bookings by Month (stacked: active + cancelled) */}
           <div style={styles.chartCard}>
             <h3 style={styles.chartTitle}>Bookings by Month</h3>
             {bookingMonthData.length > 0 ? (
@@ -295,8 +307,10 @@ export default function Analytics({ isMobile }) {
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" />
                   <XAxis dataKey="month" stroke="#444" tick={{ fontSize: 11 }} />
                   <YAxis stroke="#444" tick={{ fontSize: 11 }} allowDecimals={false} width={30} />
-                  <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }} formatter={(v) => [v, "Bookings"]} />
-                  <Bar dataKey="count" fill="#008080" radius={[6, 6, 0, 0]} />
+                  <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }} />
+                  <Legend wrapperStyle={{ fontSize: 12, color: "#888" }} />
+                  <Bar dataKey="total" name="Total" fill="#008080" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="cancelled" name="Cancelled" fill="#ef4444" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -305,9 +319,8 @@ export default function Analytics({ isMobile }) {
           </div>
         </div>
 
-        {/* Add-ons & Payments */}
+        {/* Add-ons & Payment Method */}
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: isMobile ? "12px" : "16px", marginTop: isMobile ? "12px" : "16px" }}>
-          {/* Top Add-ons */}
           <div style={styles.chartCard}>
             <h3 style={styles.chartTitle}>Popular Add-ons</h3>
             {addonData.length > 0 ? (
@@ -327,7 +340,6 @@ export default function Analytics({ isMobile }) {
             )}
           </div>
 
-          {/* Revenue by Payment Method */}
           <div style={styles.chartCard}>
             <h3 style={styles.chartTitle}>Revenue by Payment Method</h3>
             {paymentMethodData.length > 0 ? (
@@ -360,7 +372,7 @@ export default function Analytics({ isMobile }) {
         </div>
       </div>
 
-      {/* Charts Row 2 */}
+      {/* Expense: Monthly + Payment Status */}
       <div style={{ display: "grid", gridTemplateColumns: cols, gap: isMobile ? "12px" : "16px" }}>
         <div style={styles.chartCard}>
           <h3 style={styles.chartTitle}>Monthly Expenses</h3>
@@ -369,27 +381,21 @@ export default function Analytics({ isMobile }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" />
               <XAxis dataKey="month" stroke="#444" tick={{ fontSize: 11 }} />
               <YAxis stroke="#444" tick={{ fontSize: 11 }} tickFormatter={(v) => "₹" + v / 1000 + "k"} width={45} />
-              <Tooltip
-                contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }}
-                formatter={(v) => [fmt(v), "Total"]}
-              />
+              <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }} formatter={(v) => [fmt(v), "Total"]} />
               <Bar dataKey="amount" fill="#008080" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
         <div style={styles.chartCard}>
-          <h3 style={styles.chartTitle}>Payment Status</h3>
+          <h3 style={styles.chartTitle}>Expense Settlement Status</h3>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
               <Pie data={statusData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
                 <Cell fill="#10b981" />
                 <Cell fill="#f59e0b" />
               </Pie>
-              <Tooltip
-                contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }}
-                formatter={(v) => [v + " entries", "Count"]}
-              />
+              <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} labelStyle={{ color: "#aaa" }} formatter={(v) => [v + " entries", "Count"]} />
               <Legend wrapperStyle={{ fontSize: 13, color: "#888" }} />
             </PieChart>
           </ResponsiveContainer>
@@ -404,8 +410,6 @@ export default function Analytics({ isMobile }) {
 }
 
 const styles = {
-  chartCard: {
-    background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: "18px",
-  },
+  chartCard: { background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: "18px" },
   chartTitle: { fontSize: "14px", fontWeight: "600", color: "#e0e0e0", marginBottom: "14px" },
 };

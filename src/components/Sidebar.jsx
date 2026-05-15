@@ -6,6 +6,7 @@ import {
   LogOut,
   ListTodo,
   CalendarDays,
+  Tag,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
@@ -16,6 +17,7 @@ const navItems = [
   { id: "expenses", label: "Expenses", icon: Receipt },
   { id: "settlement", label: "Settlement", icon: ArrowLeftRight },
   { id: "todo", label: "Todo", icon: ListTodo },
+  { id: "guestpromos", label: "Guest Promos", icon: Tag },
 ];
 
 export default function Sidebar({ active, setActive, isMobile, open }) {

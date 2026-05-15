@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
 import { useWindowWidth } from "../hooks/useWindowWidth";
 
@@ -106,6 +106,74 @@ export default function GuestForm() {
   const [submitted, setSubmitted] = useState(false);
   const [bookingId, setBookingId] = useState(null);
   const [error, setError] = useState("");
+  const [isFirstTime, setIsFirstTime] = useState(null);
+  const [newGuestDiscount, setNewGuestDiscount] = useState(0); // fetched from "NEW" promo code in DB
+  const [checkingPhone, setCheckingPhone] = useState(false);
+  const [assignedPromo, setAssignedPromo] = useState(null); // { promo_code, discount_percent, id }
+  const [promoInput, setPromoInput] = useState("");
+  const [promoApplied, setPromoApplied] = useState(false);
+  const [promoError, setPromoError] = useState("");
+  const [rates, setRates] = useState({
+    weekday_rate: 1699,
+    weekend_rate: 1899,
+  });
+
+  useEffect(() => {
+    supabase
+      .from("room_rates")
+      .select("*")
+      .eq("id", 1)
+      .single()
+      .then(({ data }) => {
+        if (data) setRates(data);
+      });
+  }, []);
+
+  const checkFirstTime = async (phone) => {
+    const cleaned = phone.replace(/\D/g, "");
+    if (cleaned.length < 10) { setIsFirstTime(null); setAssignedPromo(null); setNewGuestDiscount(0); return; }
+    setCheckingPhone(true);
+    const [bookingRes, promoRes] = await Promise.all([
+      supabase.from("guest_bookings").select("id").eq("phone", phone).limit(1),
+      supabase.from("phone_promos").select("*").eq("phone", phone).eq("claimed", false).single(),
+    ]);
+    const firstTime = !bookingRes.data || bookingRes.data.length === 0;
+    setIsFirstTime(firstTime);
+    // Fetch NEW promo discount from DB dynamically
+    if (firstTime) {
+      const { data: newPromoData } = await supabase
+        .from("promo_codes")
+        .select("discount_percent")
+        .eq("code", "NEW")
+        .eq("active", true)
+        .single();
+      setNewGuestDiscount(newPromoData?.discount_percent || 0);
+    } else {
+      setNewGuestDiscount(0);
+    }
+    setCheckingPhone(false);
+    setPromoError("");
+    if (promoRes.data) {
+      const { data: codeData } = await supabase
+        .from("promo_codes")
+        .select("discount_percent")
+        .eq("code", promoRes.data.promo_code)
+        .eq("active", true)
+        .single();
+      const promo = {
+        id: promoRes.data.id,
+        promo_code: promoRes.data.promo_code,
+        discount_percent: codeData?.discount_percent || 0,
+      };
+      setAssignedPromo(promo);
+      setPromoInput(promo.promo_code);
+      setPromoApplied(false);
+    } else {
+      setAssignedPromo(null);
+      setPromoInput("");
+      setPromoApplied(false);
+    }
+  };
 
   const toggleAddon = (id) => {
     setSelectedAddons((prev) =>
@@ -113,10 +181,54 @@ export default function GuestForm() {
     );
   };
 
-  const totalCost = ADDONS.filter((a) => selectedAddons.includes(a.id)).reduce(
-    (sum, a) => sum + a.price,
-    0
-  );
+  const rawAddonCost = ADDONS.filter((a) =>
+    selectedAddons.includes(a.id)
+  ).reduce((sum, a) => sum + a.price, 0);
+  const firstTimePct = isFirstTime ? newGuestDiscount : 0;
+  const promoPct = (assignedPromo && promoApplied) ? assignedPromo.discount_percent : 0;
+  const discountPct = Math.min(firstTimePct + promoPct, 50);
+
+  const handleApplyPromo = () => {
+    if (!assignedPromo) {
+      setPromoError("This promo code is not valid for your number.");
+      return;
+    }
+    if (promoInput.trim().toUpperCase() === assignedPromo.promo_code) {
+      setPromoApplied(true);
+      setPromoError("");
+    } else {
+      setPromoApplied(false);
+      setPromoError("Invalid promo code for your number.");
+    }
+  };
+  const totalCost = Math.round(rawAddonCost * (1 - discountPct / 100));
+
+  const calcRoomCost = (checkIn, checkOut) => {
+    if (!checkIn || !checkOut) return null;
+    const start = new Date(checkIn);
+    const end = new Date(checkOut);
+    if (end <= start) return null;
+    let total = 0;
+    let nights = 0;
+    const cur = new Date(start);
+    while (cur < end) {
+      const day = cur.getDay(); // 0=Sun,5=Fri,6=Sat
+      total +=
+        day === 0 || day === 5 || day === 6
+          ? rates.weekend_rate
+          : rates.weekday_rate;
+      nights++;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return { total, nights };
+  };
+  const roomCalc = calcRoomCost(form.check_in, form.check_out);
+  const roomCostRaw = roomCalc ? roomCalc.total : null;
+  const roomCostFinal =
+    roomCostRaw !== null
+      ? Math.round(roomCostRaw * (1 - discountPct / 100))
+      : null;
+  const grandTotal = roomCostFinal !== null ? roomCostFinal + totalCost : null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -137,7 +249,16 @@ export default function GuestForm() {
 
     const { data: inserted, error: dbError } = await supabase
       .from("guest_bookings")
-      .insert([{ ...form, guests_count: Number(form.guests_count), addons: addonsData }])
+      .insert([
+        {
+          ...form,
+          guests_count: Number(form.guests_count),
+          addons: addonsData,
+          discount: firstTimePct, // pulled from "NEW" promo in DB
+          promo_code: (assignedPromo && promoApplied) ? assignedPromo.promo_code : null,
+          promo_discount: promoPct,
+        },
+      ])
       .select()
       .single();
 
@@ -145,6 +266,9 @@ export default function GuestForm() {
     if (dbError) {
       setError("Something went wrong. Please try again.");
     } else {
+      if (assignedPromo && promoApplied) {
+        await supabase.from("phone_promos").update({ claimed: true }).eq("id", assignedPromo.id);
+      }
       setBookingId(inserted.id);
       setSubmitted(true);
     }
@@ -160,19 +284,64 @@ export default function GuestForm() {
     const waUrl = `https://wa.me/${waPhone}?text=${waText}`;
 
     return (
-      <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
-        <div style={{ ...styles.card, textAlign: "center", padding: "40px 28px", maxWidth: "440px", width: "100%" }}>
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0a0a0a",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px",
+        }}
+      >
+        <div
+          style={{
+            ...styles.card,
+            textAlign: "center",
+            padding: "40px 28px",
+            maxWidth: "440px",
+            width: "100%",
+          }}
+        >
           <div style={{ fontSize: "48px", marginBottom: "16px" }}>✅</div>
-          <h2 style={{ color: "#f0f0f0", fontSize: "22px", fontWeight: "700", marginBottom: "8px" }}>
+          <h2
+            style={{
+              color: "#f0f0f0",
+              fontSize: "22px",
+              fontWeight: "700",
+              marginBottom: "8px",
+            }}
+          >
             Booking Submitted!
           </h2>
           <p style={{ color: "#666", fontSize: "14px", lineHeight: "1.6" }}>
-            Thank you, <strong style={{ color: "#33b5b5" }}>{form.name}</strong>! We've received your details and will get in touch shortly.
+            Thank you, <strong style={{ color: "#33b5b5" }}>{form.name}</strong>
+            ! We've received your details and will get in touch shortly.
           </p>
 
           {selectedAddons.length > 0 && (
             <p style={{ color: "#555", fontSize: "13px", marginTop: "10px" }}>
-              {selectedAddons.length} add-on{selectedAddons.length > 1 ? "s" : ""} requested · Est. ₹{totalCost.toLocaleString("en-IN")}
+              {selectedAddons.length} add-on
+              {selectedAddons.length > 1 ? "s" : ""} requested · Est. ₹
+              {totalCost.toLocaleString("en-IN")}
+              {isFirstTime && newGuestDiscount > 0 && (
+                <span style={{ color: "#10b981" }}> ({newGuestDiscount}% off applied)</span>
+              )}
+            </p>
+          )}
+          {isFirstTime && newGuestDiscount > 0 && (
+            <p
+              style={{
+                fontSize: "13px",
+                color: "#10b981",
+                background: "rgba(16,185,129,0.08)",
+                border: "1px solid rgba(16,185,129,0.2)",
+                borderRadius: "8px",
+                padding: "8px 14px",
+                marginTop: "8px",
+              }}
+            >
+              {newGuestDiscount}% first-time guest discount applied!
             </p>
           )}
 
@@ -180,11 +349,28 @@ export default function GuestForm() {
           <div style={{ borderTop: "1px solid #1e1e1e", margin: "24px 0" }} />
 
           {/* Document Upload CTA */}
-          <p style={{ fontSize: "13px", color: "#888", marginBottom: "6px", fontWeight: "600" }}>
-            📋 NEXT STEP
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#888",
+              marginBottom: "6px",
+              fontWeight: "600",
+            }}
+          >
+            NEXT STEP
           </p>
-          <p style={{ fontSize: "13px", color: "#666", lineHeight: "1.6", marginBottom: "18px" }}>
-            Please upload your <strong style={{ color: "#e0e0e0" }}>Aadhaar card</strong> for verification. Click below to send yourself the upload link on WhatsApp.
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#666",
+              lineHeight: "1.6",
+              marginBottom: "18px",
+            }}
+          >
+            Please upload your{" "}
+            <strong style={{ color: "#e0e0e0" }}>Aadhaar card</strong> for
+            verification. Click below to send yourself the upload link on
+            WhatsApp.
           </p>
 
           <a
@@ -192,14 +378,37 @@ export default function GuestForm() {
             target="_blank"
             rel="noreferrer"
             style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              padding: "13px 20px",
+              borderRadius: "10px",
+              background: "rgba(37,211,102,0.12)",
+              border: "1px solid rgba(37,211,102,0.35)",
+              color: "#25d366",
+              fontSize: "14px",
+              fontWeight: "700",
+              textDecoration: "none",
+              marginBottom: "12px",
+            }}
+          >
+            Send Upload Link to Myself on WhatsApp
+          </a>
+
+          <a
+            href={uploadLink}
+            target="_blank"
+            rel="noreferrer"
+            style={{
               display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
               padding: "13px 20px", borderRadius: "10px",
-              background: "rgba(37,211,102,0.12)", border: "1px solid rgba(37,211,102,0.35)",
-              color: "#25d366", fontSize: "14px", fontWeight: "700",
+              background: "rgba(0,128,128,0.12)", border: "1px solid rgba(0,128,128,0.35)",
+              color: "#33b5b5", fontSize: "14px", fontWeight: "700",
               textDecoration: "none", marginBottom: "12px",
             }}
           >
-            📲 Send Upload Link to Myself on WhatsApp
+            Upload Aadhaar Now
           </a>
 
           <p style={{ fontSize: "11px", color: "#333" }}>
@@ -216,19 +425,35 @@ export default function GuestForm() {
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.logoWrap}>
-            <img src="/logo.png" alt="Luxora" style={styles.logo} onError={(e) => { e.target.style.display = "none"; }} />
+            <img
+              src="/logo.png"
+              alt="Luxora"
+              style={styles.logo}
+              onError={(e) => {
+                e.target.style.display = "none";
+              }}
+            />
           </div>
           <h1 style={styles.title}>Guest Registration</h1>
-          <p style={styles.subtitle}>Fill in your details and choose any add-ons you'd like</p>
+          <p style={styles.subtitle}>
+            Fill in your details and choose any add-ons you'd like
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           {/* Basic Details */}
           <div style={styles.section}>
             <p style={styles.sectionLabel}>BASIC DETAILS</p>
-            <div style={{ ...styles.grid2, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
+            <div
+              style={{
+                ...styles.grid2,
+                gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+              }}
+            >
               <div style={styles.field}>
-                <label style={styles.label}>Full Name <span style={styles.req}>*</span></label>
+                <label style={styles.label}>
+                  Full Name <span style={styles.req}>*</span>
+                </label>
                 <input
                   style={styles.input}
                   placeholder="Your name"
@@ -237,16 +462,73 @@ export default function GuestForm() {
                 />
               </div>
               <div style={styles.field}>
-                <label style={styles.label}>WhatsApp Number <span style={styles.req}>*</span></label>
+                <label style={styles.label}>
+                  WhatsApp Number <span style={styles.req}>*</span>
+                </label>
                 <input
                   style={styles.input}
                   placeholder="+91 00000 00000"
                   value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  onChange={(e) => {
+                    setForm({ ...form, phone: e.target.value });
+                    setIsFirstTime(null);
+                    setNewGuestDiscount(0);
+                    setAssignedPromo(null);
+                    setPromoInput("");
+                    setPromoApplied(false);
+                    setPromoError("");
+                  }}
+                  onBlur={(e) => checkFirstTime(e.target.value)}
                 />
-                <p style={{ fontSize: "11px", color: "#555", marginTop: "4px" }}>
-                  Please enter your WhatsApp number — we'll contact you here.
-                </p>
+                {checkingPhone && (
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginTop: "4px",
+                    }}
+                  >
+                    Checking...
+                  </p>
+                )}
+                {!checkingPhone && isFirstTime === true && newGuestDiscount > 0 && (
+                  <p
+                    style={{
+                      fontSize: "12px",
+                      color: "#10b981",
+                      marginTop: "5px",
+                      fontWeight: "600",
+                      background: "rgba(16,185,129,0.08)",
+                      border: "1px solid rgba(16,185,129,0.25)",
+                      borderRadius: "6px",
+                      padding: "5px 10px",
+                    }}
+                  >
+                    Welcome! {newGuestDiscount}% first-time guest discount applied.
+                  </p>
+                )}
+                {!checkingPhone && isFirstTime === false && (
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginTop: "4px",
+                    }}
+                  >
+                    Please enter your WhatsApp number — we'll contact you here.
+                  </p>
+                )}
+                {isFirstTime === null && !checkingPhone && (
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginTop: "4px",
+                    }}
+                  >
+                    Please enter your WhatsApp number — we'll contact you here.
+                  </p>
+                )}
               </div>
               <div style={styles.field}>
                 <label style={styles.label}>Email</label>
@@ -263,30 +545,45 @@ export default function GuestForm() {
                 <select
                   style={styles.input}
                   value={form.guests_count}
-                  onChange={(e) => setForm({ ...form, guests_count: Number(e.target.value) })}
+                  onChange={(e) =>
+                    setForm({ ...form, guests_count: Number(e.target.value) })
+                  }
                 >
                   <option value={1}>1 Guest</option>
                   <option value={2}>2 Guests</option>
                   <option value={3}>3 Guests</option>
                 </select>
-                <p style={{ fontSize: "11px", color: "#555", marginTop: "4px" }}>Maximum 3 guests allowed</p>
+                <p
+                  style={{ fontSize: "11px", color: "#555", marginTop: "4px" }}
+                >
+                  Maximum 3 guests allowed
+                </p>
               </div>
               <div style={styles.field}>
-                <label style={styles.label}>Check-in Date <span style={styles.req}>*</span></label>
+                <label style={styles.label}>
+                  Check-in Date <span style={styles.req}>*</span>
+                </label>
                 <input
                   style={styles.input}
                   type="date"
                   value={form.check_in}
-                  onChange={(e) => setForm({ ...form, check_in: e.target.value })}
+                  min={new Date().toISOString().split("T")[0]}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setForm((f) => ({ ...f, check_in: val, check_out: f.check_out <= val ? "" : f.check_out }));
+                  }}
                 />
               </div>
               <div style={styles.field}>
-                <label style={styles.label}>Check-out Date <span style={styles.req}>*</span></label>
+                <label style={styles.label}>
+                  Check-out Date <span style={styles.req}>*</span>
+                </label>
                 <input
                   style={styles.input}
                   type="date"
                   value={form.check_out}
-                  onChange={(e) => setForm({ ...form, check_out: e.target.value })}
+                  min={form.check_in ? (() => { const d = new Date(form.check_in); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })() : new Date().toISOString().split("T")[0]}
+                  onChange={(e) => setForm((f) => ({ ...f, check_out: e.target.value }))}
                 />
               </div>
             </div>
@@ -295,10 +592,17 @@ export default function GuestForm() {
           {/* Add-ons */}
           <div style={styles.section}>
             <p style={styles.sectionLabel}>ADD-ONS & SERVICES</p>
-            <p style={{ color: "#555", fontSize: "13px", marginBottom: "16px" }}>
+            <p
+              style={{ color: "#555", fontSize: "13px", marginBottom: "16px" }}
+            >
               Select any additional services you'd like during your stay
             </p>
-            <div style={{ ...styles.addonGrid, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
+            <div
+              style={{
+                ...styles.addonGrid,
+                gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+              }}
+            >
               {ADDONS.map((addon) => {
                 const active = selectedAddons.includes(addon.id);
                 return (
@@ -320,16 +624,64 @@ export default function GuestForm() {
                           borderColor: active ? "#008080" : "#333",
                         }}
                       >
-                        {active && <span style={{ color: "#fff", fontSize: "11px", fontWeight: "700" }}>✓</span>}
+                        {active && (
+                          <span
+                            style={{
+                              color: "#fff",
+                              fontSize: "11px",
+                              fontWeight: "700",
+                            }}
+                          >
+                            ✓
+                          </span>
+                        )}
                       </div>
                     </div>
                     <p style={styles.addonLabel}>{addon.label}</p>
                     <p style={styles.addonDesc}>{addon.desc}</p>
-                    <p style={styles.addonPrice}>from ₹{addon.price.toLocaleString("en-IN")}</p>
+                    <p style={styles.addonPrice}>
+                      from ₹{addon.price.toLocaleString("en-IN")}
+                    </p>
                   </div>
                 );
               })}
             </div>
+          </div>
+
+          {/* Promo Code — always visible */}
+          <div style={styles.section}>
+            <p style={styles.sectionLabel}>PROMO CODE</p>
+            {promoApplied && assignedPromo ? (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)", borderRadius: "8px", padding: "10px 14px" }}>
+                <p style={{ fontSize: "13px", color: "#10b981", fontWeight: "700" }}>
+                  {assignedPromo.promo_code} — {assignedPromo.discount_percent}% off applied!
+                </p>
+                <button type="button" onClick={() => { setPromoApplied(false); setPromoInput(""); setAssignedPromo(null); }}
+                  style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: "18px", lineHeight: 1 }}>×</button>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <input
+                    style={{ ...styles.input, textTransform: "uppercase", letterSpacing: "0.08em" }}
+                    placeholder="Have a promo code? Enter here"
+                    value={promoInput}
+                    onChange={(e) => { setPromoInput(e.target.value); setPromoError(""); }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleApplyPromo}
+                    disabled={!promoInput.trim()}
+                    style={{ padding: "10px 18px", background: "rgba(0,128,128,0.15)", border: "1px solid rgba(0,128,128,0.4)", borderRadius: "8px", color: "#33b5b5", fontWeight: "700", fontSize: "13px", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    Apply
+                  </button>
+                </div>
+                {promoError && (
+                  <p style={{ fontSize: "12px", color: "#ef4444", marginTop: "6px" }}>{promoError}</p>
+                )}
+              </>
+            )}
           </div>
 
           {/* Notes */}
@@ -344,19 +696,243 @@ export default function GuestForm() {
           </div>
 
           {/* Summary + Submit */}
-          {selectedAddons.length > 0 && (
-            <div style={styles.summary}>
-              <span style={{ color: "#888", fontSize: "13px" }}>
-                {selectedAddons.length} add-on{selectedAddons.length > 1 ? "s" : ""} selected
-              </span>
-              <span style={{ color: "#33b5b5", fontWeight: "600", fontSize: "15px" }}>
-                Est. ₹{totalCost.toLocaleString("en-IN")}
-              </span>
+          {(roomCalc || selectedAddons.length > 0) && (
+            <div
+              style={{
+                ...styles.summary,
+                flexDirection: "column",
+                gap: "10px",
+                alignItems: "stretch",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  color: "#444",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                COST SUMMARY
+              </p>
+
+              {/* Room cost rows */}
+              {roomCalc && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "4px",
+                  }}
+                >
+                  {(() => {
+                    // breakdown by type
+                    const start = new Date(form.check_in);
+                    const end = new Date(form.check_out);
+                    let wdNights = 0,
+                      weNights = 0;
+                    const cur = new Date(start);
+                    while (cur < end) {
+                      const d = cur.getDay();
+                      if (d === 0 || d === 5 || d === 6) weNights++;
+                      else wdNights++;
+                      cur.setDate(cur.getDate() + 1);
+                    }
+                    return (
+                      <>
+                        {wdNights > 0 && (
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <span style={{ color: "#666", fontSize: "13px" }}>
+                              Mon–Thu × {wdNights} night
+                              {wdNights > 1 ? "s" : ""}
+                            </span>
+                            <span style={{ color: "#ccc", fontSize: "13px" }}>
+                              ₹
+                              {(wdNights * rates.weekday_rate).toLocaleString(
+                                "en-IN"
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {weNights > 0 && (
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <span style={{ color: "#666", fontSize: "13px" }}>
+                              Fri–Sun × {weNights} night
+                              {weNights > 1 ? "s" : ""}
+                            </span>
+                            <span style={{ color: "#ccc", fontSize: "13px" }}>
+                              ₹
+                              {(weNights * rates.weekend_rate).toLocaleString(
+                                "en-IN"
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {isFirstTime && (
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span style={{ color: "#10b981", fontSize: "12px" }}>First-time {firstTimePct}% off</span>
+                            <span style={{ color: "#10b981", fontSize: "12px" }}>
+                              −₹{Math.round(roomCostRaw * firstTimePct / 100).toLocaleString("en-IN")}
+                            </span>
+                          </div>
+                        )}
+                        {promoApplied && assignedPromo && (
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span style={{ color: "#10b981", fontSize: "12px" }}>{assignedPromo.promo_code} ({assignedPromo.discount_percent}% off)</span>
+                            <span style={{ color: "#10b981", fontSize: "12px" }}>
+                              −₹{Math.round(roomCostRaw * promoPct / 100).toLocaleString("en-IN")}
+                            </span>
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            borderTop: "1px solid #1e1e1e",
+                            paddingTop: "6px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: "#888",
+                              fontSize: "13px",
+                              fontWeight: "600",
+                            }}
+                          >
+                            Room Total ({roomCalc.nights} nights)
+                          </span>
+                          <span
+                            style={{
+                              color: "#f0f0f0",
+                              fontSize: "13px",
+                              fontWeight: "700",
+                            }}
+                          >
+                            ₹{roomCostFinal.toLocaleString("en-IN")}
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Add-ons */}
+              {selectedAddons.length > 0 && (
+                <div style={{ borderTop: "1px solid #1e1e1e", paddingTop: "6px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#888", fontSize: "13px" }}>Add-ons est. ({selectedAddons.length})</span>
+                    <span style={{ color: "#ccc", fontSize: "13px" }}>~₹{rawAddonCost.toLocaleString("en-IN")}</span>
+                  </div>
+                  {isFirstTime && (
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#10b981", fontSize: "12px" }}>First-time {firstTimePct}% off</span>
+                      <span style={{ color: "#10b981", fontSize: "12px" }}>−₹{Math.round(rawAddonCost * firstTimePct / 100).toLocaleString("en-IN")}</span>
+                    </div>
+                  )}
+                  {promoApplied && assignedPromo && (
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#10b981", fontSize: "12px" }}>{assignedPromo.promo_code} ({assignedPromo.discount_percent}% off)</span>
+                      <span style={{ color: "#10b981", fontSize: "12px" }}>−₹{Math.round(rawAddonCost * promoPct / 100).toLocaleString("en-IN")}</span>
+                    </div>
+                  )}
+                  {discountPct > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#888", fontSize: "13px", fontWeight: "600" }}>Add-ons after discount</span>
+                      <span style={{ color: "#ccc", fontSize: "13px", fontWeight: "600" }}>~₹{totalCost.toLocaleString("en-IN")}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Grand total */}
+              {grandTotal !== null && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    background: "rgba(0,128,128,0.08)",
+                    border: "1px solid rgba(0,128,128,0.2)",
+                    borderRadius: "8px",
+                    padding: "10px 14px",
+                    marginTop: "4px",
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "#33b5b5",
+                      fontSize: "14px",
+                      fontWeight: "700",
+                    }}
+                  >
+                    Estimated Total
+                  </span>
+                  <span
+                    style={{
+                      color: "#33b5b5",
+                      fontSize: "16px",
+                      fontWeight: "800",
+                    }}
+                  >
+                    ₹{grandTotal.toLocaleString("en-IN")}
+                  </span>
+                </div>
+              )}
+              {grandTotal === null && selectedAddons.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    background: "rgba(0,128,128,0.08)",
+                    border: "1px solid rgba(0,128,128,0.2)",
+                    borderRadius: "8px",
+                    padding: "10px 14px",
+                    marginTop: "4px",
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "#33b5b5",
+                      fontSize: "14px",
+                      fontWeight: "700",
+                    }}
+                  >
+                    Add-ons Est.
+                  </span>
+                  <span
+                    style={{
+                      color: "#33b5b5",
+                      fontSize: "16px",
+                      fontWeight: "800",
+                    }}
+                  >
+                    ~₹{totalCost.toLocaleString("en-IN")}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
           {error && (
-            <p style={{ color: "#ef4444", fontSize: "13px", textAlign: "center" }}>{error}</p>
+            <p
+              style={{
+                color: "#ef4444",
+                fontSize: "13px",
+                textAlign: "center",
+              }}
+            >
+              {error}
+            </p>
           )}
 
           <button type="submit" disabled={submitting} style={styles.submitBtn}>

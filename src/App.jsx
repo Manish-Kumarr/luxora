@@ -8,6 +8,7 @@ import Analytics from "./pages/Analytics";
 import Settlement from "./pages/Settlement";
 import Todo from "./pages/Todo";
 import Bookings from "./pages/Bookings";
+import GuestPromos from "./pages/GuestPromos";
 import GuestForm from "./pages/GuestForm";
 import UploadDocs from "./pages/UploadDocs";
 import LandingPage from "./pages/LandingPage";
@@ -21,6 +22,7 @@ const PAGE_TITLES = {
   settlement: "Settlement",
   todo: "Todo",
   bookings: "Guest Bookings",
+  guestpromos: "Guest Promos",
 };
 
 function AppInner() {
@@ -55,6 +57,7 @@ function AppInner() {
     settlement: <Settlement isMobile={isMobile} />,
     todo: <Todo isMobile={isMobile} />,
     bookings: <Bookings isMobile={isMobile} />,
+    guestpromos: <GuestPromos isMobile={isMobile} />,
   };
 
   const handleNavChange = (page) => {

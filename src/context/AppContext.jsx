@@ -13,7 +13,9 @@ export function AppProvider({ children }) {
   const [bookings, setBookings] = useState([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
   const [payments, setPayments] = useState([]);
-
+  const [roomRates, setRoomRates] = useState({ weekday_rate: 1699, weekend_rate: 1899 });
+  const [promoCodes, setPromoCodes] = useState([]);
+  const [phonePromos, setPhonePromos] = useState([]);
 
   // Check existing session on mount
   useEffect(() => {
@@ -35,6 +37,9 @@ export function AppProvider({ children }) {
       fetchTodos();
       fetchBookings();
       fetchPayments();
+      fetchRoomRates();
+      fetchPromoCodes();
+      fetchPhonePromos();
     } else {
       setExpenses([]);
       setTodos([]);
@@ -135,6 +140,93 @@ export function AppProvider({ children }) {
     const { error } = await supabase.from("payments").delete().eq("id", id);
     if (!error) setPayments((prev) => prev.filter((p) => p.id !== id));
     return { error };
+  };
+
+  const fetchRoomRates = async () => {
+    const { data, error } = await supabase.from("room_rates").select("*").eq("id", 1).single();
+    if (!error && data) setRoomRates(data);
+  };
+
+  const updateRoomRates = async (weekday_rate, weekend_rate) => {
+    const { data, error } = await supabase
+      .from("room_rates")
+      .update({ weekday_rate: Number(weekday_rate), weekend_rate: Number(weekend_rate) })
+      .eq("id", 1)
+      .select()
+      .single();
+    if (!error && data) setRoomRates(data);
+    return { error };
+  };
+
+  const fetchPromoCodes = async () => {
+    const { data } = await supabase.from("promo_codes").select("*").order("discount_percent");
+    if (data) setPromoCodes(data);
+  };
+
+  const addPromoCode = async (code, discount_percent) => {
+    const { data, error } = await supabase
+      .from("promo_codes")
+      .insert([{ code: code.toUpperCase().trim(), discount_percent: Number(discount_percent), active: true }])
+      .select().single();
+    if (!error && data) setPromoCodes((prev) => [...prev, data].sort((a, b) => a.discount_percent - b.discount_percent));
+    return { error };
+  };
+
+  const updatePromoCode = async (code, discount_percent) => {
+    const { data, error } = await supabase
+      .from("promo_codes")
+      .update({ discount_percent: Number(discount_percent) })
+      .eq("code", code)
+      .select().single();
+    if (!error && data) setPromoCodes((prev) => prev.map((p) => p.code === code ? data : p));
+    return { error };
+  };
+
+  const togglePromoCode = async (code, active) => {
+    const { data, error } = await supabase
+      .from("promo_codes")
+      .update({ active })
+      .eq("code", code)
+      .select().single();
+    if (!error && data) setPromoCodes((prev) => prev.map((p) => p.code === code ? data : p));
+    return { error };
+  };
+
+  const deletePromoCode = async (code) => {
+    const { error } = await supabase.from("promo_codes").delete().eq("code", code);
+    if (!error) setPromoCodes((prev) => prev.filter((p) => p.code !== code));
+    return { error };
+  };
+
+  const fetchPhonePromos = async () => {
+    const { data } = await supabase.from("phone_promos").select("*").order("created_at", { ascending: false });
+    if (data) setPhonePromos(data);
+  };
+
+  const assignPhonePromo = async (phone, promoCode) => {
+    const { data, error } = await supabase
+      .from("phone_promos")
+      .upsert([{ phone, promo_code: promoCode, claimed: false }], { onConflict: "phone" })
+      .select().single();
+    if (!error && data) setPhonePromos((prev) => {
+      const exists = prev.find((p) => p.phone === phone);
+      return exists ? prev.map((p) => p.phone === phone ? data : p) : [data, ...prev];
+    });
+    return { error };
+  };
+
+  const removePhonePromo = async (id) => {
+    const { error } = await supabase.from("phone_promos").delete().eq("id", id);
+    if (!error) setPhonePromos((prev) => prev.filter((p) => p.id !== id));
+    return { error };
+  };
+
+  const applyPromoToBooking = async (bookingId, promoCode) => {
+    const promo = promoCodes.find((p) => p.code === promoCode);
+    const updates = promo
+      ? { promo_code: promo.code, promo_discount: promo.discount_percent }
+      : { promo_code: null, promo_discount: 0 };
+    return updateBooking(bookingId, updates);
   };
 
   const getDocUrls = (bookingId) => {
@@ -240,6 +332,17 @@ export function AppProvider({ children }) {
         payments,
         addPayment,
         deletePayment,
+        roomRates,
+        updateRoomRates,
+        promoCodes,
+        addPromoCode,
+        updatePromoCode,
+        togglePromoCode,
+        deletePromoCode,
+        applyPromoToBooking,
+        phonePromos,
+        assignPhonePromo,
+        removePhonePromo,
       }}
     >
       {children}
