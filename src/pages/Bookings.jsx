@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import {
   Pencil,
   Trash2,
@@ -10,11 +10,30 @@ import {
   LayoutList,
   Upload,
   RefreshCw,
+  ChevronDown,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { supabase } from "../lib/supabase";
 
-const STATUS_OPTIONS = ["pending", "confirmed", "checked-in", "checked-out", "cancelled"];
+const STATUS_OPTIONS = [
+  "pending",
+  "confirmed",
+  "checked-in",
+  "checked-out",
+  "cancelled",
+];
+const inputStyle = {
+  width: "100%",
+  background: "#1a1a1a",
+  border: "1px solid #2a2a2a",
+  borderRadius: "8px",
+  padding: "9px 12px",
+  color: "#e0e0e0",
+  fontSize: "14px",
+  outline: "none",
+  boxSizing: "border-box",
+};
+
 const STATUS_COLORS = {
   pending: { color: "#f59e0b", bg: "#f59e0b18", border: "#f59e0b40" },
   confirmed: { color: "#33b5b5", bg: "#33b5b518", border: "#33b5b540" },
@@ -33,17 +52,32 @@ const TYPE_COLORS = {
 };
 
 const ALL_ADDONS = [
-  { id: "early_checkin", label: "Early Check-in / Late Check-out", price: 500, icon: "🕐" },
+  {
+    id: "early_checkin",
+    label: "Early Check-in / Late Check-out",
+    price: 500,
+    icon: "🕐",
+  },
   { id: "breakfast", label: "Breakfast / Home Food", price: 200, icon: "🍽️" },
   { id: "laundry", label: "Laundry Service", price: 100, icon: "👕" },
-  { id: "bike_rental", label: "Scooter / Bike / Car Rental", price: 500, icon: "🛵" },
+  {
+    id: "bike_rental",
+    label: "Scooter / Bike / Car Rental",
+    price: 500,
+    icon: "🛵",
+  },
   { id: "local_tour", label: "Local Tour / Guide", price: 800, icon: "🗺️" },
   { id: "room_decoration", label: "Room Decoration", price: 1000, icon: "🎉" },
   { id: "wfh_setup", label: "Work-From-Home Setup", price: 300, icon: "💻" },
   { id: "grocery", label: "Grocery / Fridge Stocking", price: 200, icon: "🛒" },
   { id: "minibar", label: "Mini Bar / Snack Basket", price: 350, icon: "🧃" },
   { id: "housekeeping", label: "Housekeeping Upgrade", price: 200, icon: "🧹" },
-  { id: "streaming", label: "Streaming & Entertainment", price: 400, icon: "📺" },
+  {
+    id: "streaming",
+    label: "Streaming & Entertainment",
+    price: 400,
+    icon: "📺",
+  },
 ];
 
 const BLANK_EDIT = {
@@ -54,6 +88,12 @@ const BLANK_EDIT = {
   check_out: "",
   guests_count: 1,
   notes: "",
+  broker_name: "",
+  broker_phone: "",
+  broker_commission: "",
+  commissionType: "fixed",
+  custom_room_price: "",
+  useCustomPrice: false,
 };
 const BLANK_PAY = { amount: "", method: "Cash", type: "Advance", note: "" };
 
@@ -61,6 +101,7 @@ export default function Bookings({ isMobile }) {
   const {
     bookings,
     bookingsLoading,
+    addBooking,
     updateBookingStatus,
     updateBooking,
     deleteBooking,
@@ -71,11 +112,13 @@ export default function Bookings({ isMobile }) {
     roomRates,
     promoCodes,
     applyPromoToBooking,
+    markBrokerCommissionPaid,
   } = useApp();
 
   const [promoBookingId, setPromoBookingId] = useState(null);
   const [promoSelected, setPromoSelected] = useState("");
   const [promoApplying, setPromoApplying] = useState(false);
+  const [brokerPayId, setBrokerPayId] = useState(null); // booking id being marked
 
   const calcRoomCost = (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return 0;
@@ -86,7 +129,10 @@ export default function Bookings({ isMobile }) {
     const cur = new Date(start);
     while (cur < end) {
       const day = cur.getDay();
-      total += (day === 0 || day === 5 || day === 6) ? roomRates.weekend_rate : roomRates.weekday_rate;
+      total +=
+        day === 0 || day === 5 || day === 6
+          ? roomRates.weekend_rate
+          : roomRates.weekday_rate;
       cur.setDate(cur.getDate() + 1);
     }
     return total;
@@ -95,14 +141,34 @@ export default function Bookings({ isMobile }) {
   const MAX_DISCOUNT = 200;
 
   const getBookingFinancials = (b) => {
-    const roomRaw = calcRoomCost(b.check_in, b.check_out);
+    const nights =
+      b.check_in && b.check_out
+        ? Math.max(0, (new Date(b.check_out) - new Date(b.check_in)) / 86400000)
+        : 0;
+    const roomRaw =
+      b.custom_room_price != null
+        ? Number(b.custom_room_price) * nights
+        : calcRoomCost(b.check_in, b.check_out);
     const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
     const totalDiscountPct = (b.discount || 0) + (b.promo_discount || 0);
-    const discountAmt = Math.min(Math.round((roomRaw + addonRaw) * totalDiscountPct / 100), MAX_DISCOUNT);
+    const discountAmt = Math.min(
+      Math.round(((roomRaw + addonRaw) * totalDiscountPct) / 100),
+      MAX_DISCOUNT
+    );
     const totalDue = roomRaw + addonRaw - discountAmt;
-    const totalPaid = payments.filter((p) => p.booking_id === b.id).reduce((s, p) => s + (p.amount || 0), 0);
+    const totalPaid = payments
+      .filter((p) => p.booking_id === b.id)
+      .reduce((s, p) => s + (p.amount || 0), 0);
     const balance = totalDue - totalPaid;
-    return { roomRaw, addonRaw, totalDiscountPct, discountAmt, totalDue, totalPaid, balance };
+    return {
+      roomRaw,
+      addonRaw,
+      totalDiscountPct,
+      discountAmt,
+      totalDue,
+      totalPaid,
+      balance,
+    };
   };
 
   const fmtR = (n) => "₹" + Number(n).toLocaleString("en-IN");
@@ -137,7 +203,9 @@ export default function Bookings({ isMobile }) {
     await supabase.storage.from("documents").remove([path]);
     // Check if both sides are now gone
     const otherSide = side === "front" ? "back" : "front";
-    const { data: list } = await supabase.storage.from("documents").list(docsModal.bookingId);
+    const { data: list } = await supabase.storage
+      .from("documents")
+      .list(docsModal.bookingId);
     const otherExists = list?.some((f) => f.name === `aadhaar_${otherSide}`);
     if (!otherExists) {
       await updateBooking(docsModal.bookingId, { docs_status: "pending" });
@@ -151,8 +219,12 @@ export default function Bookings({ isMobile }) {
     if (!file || !docsModal?.bookingId) return;
     setDocOps((p) => ({ ...p, [side]: "uploading" }));
     const path = `${docsModal.bookingId}/aadhaar_${side}`;
-    await supabase.storage.from("documents").upload(path, file, { upsert: true });
-    const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
+    await supabase.storage
+      .from("documents")
+      .upload(path, file, { upsert: true });
+    const { data: urlData } = supabase.storage
+      .from("documents")
+      .getPublicUrl(path);
     const freshUrl = urlData.publicUrl + "?t=" + Date.now();
     setDocsModal((prev) => ({ ...prev, [side]: freshUrl }));
     setDocOps((p) => ({ ...p, [side]: null }));
@@ -164,9 +236,138 @@ export default function Bookings({ isMobile }) {
   const [customPrice, setCustomPrice] = useState("");
   const [addonSaving, setAddonSaving] = useState(false);
 
+  // Create booking
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    check_in: "",
+    check_out: "",
+    guests_count: 1,
+    notes: "",
+    status: "confirmed",
+  });
+  const [createAddons, setCreateAddons] = useState([]);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const handleCreate = async () => {
+    setCreateError("");
+    if (!createForm.name.trim()) return setCreateError("Name is required.");
+    if (!createForm.phone.trim()) return setCreateError("Phone is required.");
+    if (createForm.phone.replace(/\D/g, "").length !== 10)
+      return setCreateError("Phone must be 10 digits.");
+    if (!createForm.check_in)
+      return setCreateError("Check-in date is required.");
+    if (!createForm.check_out)
+      return setCreateError("Check-out date is required.");
+    if (createForm.check_out <= createForm.check_in)
+      return setCreateError("Check-out must be after check-in.");
+    setCreateSaving(true);
+
+    const phone = createForm.phone.trim();
+    const { error } = await addBooking({
+      name: createForm.name.trim(),
+      phone,
+      email: createForm.email.trim(),
+      check_in: createForm.check_in,
+      check_out: createForm.check_out,
+      guests_count: Number(createForm.guests_count),
+      notes: createForm.notes.trim(),
+      status: createForm.status,
+      addons: createAddons,
+      docs_status: "pending",
+      discount: 0,
+      custom_room_price:
+        createForm.useCustomPrice && createForm.custom_room_price
+          ? Number(createForm.custom_room_price)
+          : null,
+      broker_name: createForm.broker_name?.trim() || null,
+      broker_phone: createForm.broker_phone?.trim() || null,
+      broker_commission: (() => {
+        if (!createForm.broker_commission) return null;
+        if (
+          createForm.commissionType === "percent" &&
+          createForm.custom_room_price
+        ) {
+          return Math.round(
+            (Number(createForm.custom_room_price) *
+              Number(createForm.broker_commission)) /
+              100
+          );
+        }
+        return Number(createForm.broker_commission);
+      })(),
+      broker_commission_paid: false,
+    });
+    setCreateSaving(false);
+    if (error) return setCreateError(error.message);
+    setShowCreate(false);
+    setCreateForm({
+      name: "",
+      phone: "",
+      email: "",
+      check_in: "",
+      check_out: "",
+      guests_count: 1,
+      notes: "",
+      status: "confirmed",
+    });
+    setCreateAddons([]);
+  };
+
   const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
+  const dateRange = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toISOString().split("T")[0];
+    if (dateFilter === "today") return { from: todayStr, to: todayStr };
+    if (dateFilter === "this_week") {
+      const day = now.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      const mon = new Date(now);
+      mon.setDate(now.getDate() - diff);
+      return { from: mon.toISOString().split("T")[0], to: todayStr };
+    }
+    if (dateFilter === "this_month") {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { from: first.toISOString().split("T")[0], to: todayStr };
+    }
+    if (dateFilter === "custom") return { from: customFrom, to: customTo };
+    return { from: null, to: null };
+  }, [dateFilter, customFrom, customTo]);
+
+  const FILTER_LABELS = {
+    today: "Today",
+    this_week: "This Week",
+    this_month: "This Month",
+    custom: "Custom Range",
+  };
+
+  const filteredBookings = bookings.filter((b) => {
+    const q = search.trim().toLowerCase();
+    if (
+      q &&
+      !(
+        (b.name || "").toLowerCase().includes(q) ||
+        (b.phone || "").toLowerCase().includes(q) ||
+        (b.email || "").toLowerCase().includes(q)
+      )
+    )
+      return false;
+    if (statusFilter !== "all" && b.status !== statusFilter) return false;
+    const d = b.created_at ? b.created_at.slice(0, 10) : "";
+    if (dateRange.from && d < dateRange.from) return false;
+    if (dateRange.to && d > dateRange.to) return false;
+    return true;
+  });
+
+  const isFiltered =
+    search.trim() || statusFilter !== "all" || dateFilter !== "all";
 
   const pad = isMobile ? "16px" : "32px";
   const gap = isMobile ? "14px" : "24px";
@@ -211,14 +412,50 @@ export default function Bookings({ isMobile }) {
       check_out: b.check_out || "",
       guests_count: b.guests_count || 1,
       notes: b.notes || "",
+      broker_name: b.broker_name || "",
+      broker_phone: b.broker_phone || "",
+      broker_commission:
+        b.broker_commission != null ? String(b.broker_commission) : "",
+      commissionType: "fixed",
+      custom_room_price:
+        b.custom_room_price != null ? String(b.custom_room_price) : "",
+      useCustomPrice: b.custom_room_price != null,
     });
   };
 
   const saveEdit = async () => {
     setSaving(true);
+    const effectiveCustomPrice =
+      editForm.useCustomPrice && editForm.custom_room_price
+        ? Number(editForm.custom_room_price)
+        : null;
     await updateBooking(editId, {
-      ...editForm,
+      name: editForm.name,
+      phone: editForm.phone,
+      email: editForm.email,
+      check_in: editForm.check_in,
+      check_out: editForm.check_out,
       guests_count: Number(editForm.guests_count),
+      notes: editForm.notes,
+      custom_room_price: effectiveCustomPrice,
+      broker_name: editForm.useCustomPrice
+        ? editForm.broker_name.trim() || null
+        : null,
+      broker_phone: editForm.useCustomPrice
+        ? editForm.broker_phone.trim() || null
+        : null,
+      broker_commission: editForm.useCustomPrice
+        ? (() => {
+            if (!editForm.broker_commission) return null;
+            if (editForm.commissionType === "percent" && effectiveCustomPrice) {
+              return Math.round(
+                (effectiveCustomPrice * Number(editForm.broker_commission)) /
+                  100
+              );
+            }
+            return Number(editForm.broker_commission);
+          })()
+        : null,
     });
     setSaving(false);
     setEditId(null);
@@ -268,7 +505,10 @@ export default function Bookings({ isMobile }) {
         ...prev,
         addons: exists
           ? prev.addons.filter((a) => a.id !== addon.id)
-          : [...prev.addons, { id: addon.id, label: addon.label, price: addon.price }],
+          : [
+              ...prev.addons,
+              { id: addon.id, label: addon.label, price: addon.price },
+            ],
       };
     });
   };
@@ -287,7 +527,10 @@ export default function Bookings({ isMobile }) {
   };
 
   const removeAddon = (id) => {
-    setAddonModal((prev) => ({ ...prev, addons: prev.addons.filter((a) => a.id !== id) }));
+    setAddonModal((prev) => ({
+      ...prev,
+      addons: prev.addons.filter((a) => a.id !== id),
+    }));
   };
 
   const saveAddons = async () => {
@@ -302,44 +545,246 @@ export default function Bookings({ isMobile }) {
       style={{ padding: pad, display: "flex", flexDirection: "column", gap }}
     >
       {/* Header */}
-      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "flex-start" : "center", justifyContent: "space-between", gap: "12px" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "flex-start" : "center",
+          justifyContent: "space-between",
+          gap: "12px",
+        }}
+      >
         <div>
-          <h1 style={{ fontSize: isMobile ? "20px" : "26px", fontWeight: "700", color: "#f0f0f0" }}>
-            Guest Bookings
+          <h1
+            style={{
+              fontSize: isMobile ? "20px" : "26px",
+              fontWeight: "700",
+              color: "#f0f0f0",
+            }}
+          >
+            Bookings
           </h1>
           <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>
-            {bookings.length} total request{bookings.length !== 1 ? "s" : ""}
+            {isFiltered ? (
+              <>
+                {filteredBookings.length}{" "}
+                <span style={{ color: "#444" }}>of</span> {bookings.length}{" "}
+                bookings
+              </>
+            ) : (
+              <>
+                {bookings.length} total request
+                {bookings.length !== 1 ? "s" : ""}
+              </>
+            )}
           </p>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px", width: isMobile ? "100%" : "auto" }}>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            flexWrap: "wrap",
+          }}
+        >
+          {/* Create Booking */}
+          <button
+            onClick={() => setShowCreate(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              background: "linear-gradient(135deg, #008080, #00a0a0)",
+              border: "none",
+              borderRadius: "8px",
+              color: "#fff",
+              fontWeight: "600",
+              fontSize: "13px",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            <Plus size={15} /> Create Booking
+          </button>
+
+          {/* Search */}
           <input
             type="text"
-            placeholder="Search by name, phone or email..."
+            placeholder="Search name, phone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "9px 14px", color: "#e0e0e0", fontSize: "13px", outline: "none", width: isMobile ? "100%" : "280px", boxSizing: "border-box" }}
+            style={{
+              background: "#1a1a1a",
+              border: "1px solid #2a2a2a",
+              borderRadius: "8px",
+              padding: "8px 14px",
+              color: "#e0e0e0",
+              fontSize: "13px",
+              outline: "none",
+              width: isMobile ? "100%" : "200px",
+              boxSizing: "border-box",
+            }}
           />
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              style={{ flex: 1, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "7px 10px", color: dateFrom ? "#e0e0e0" : "#555", fontSize: "12px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}
+
+          {/* Status filter dropdown */}
+          <div style={{ position: "relative" }}>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              style={{
+                appearance: "none",
+                WebkitAppearance: "none",
+                background: "#111",
+                border: "1px solid #2a2a2a",
+                borderRadius: "8px",
+                padding: "8px 32px 8px 12px",
+                color: statusFilter === "all" ? "#555" : "#33b5b5",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                outline: "none",
+                colorScheme: "dark",
+              }}
+            >
+              <option value="all">All Status</option>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={13}
+              color="#555"
+              style={{
+                position: "absolute",
+                right: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+              }}
             />
-            <span style={{ color: "#444", fontSize: "12px", flexShrink: 0 }}>to</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              style={{ flex: 1, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "7px 10px", color: dateTo ? "#e0e0e0" : "#555", fontSize: "12px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}
-            />
-            {(dateFrom || dateTo) && (
-              <button
-                onClick={() => { setDateFrom(""); setDateTo(""); }}
-                style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: "16px", padding: "0 2px", flexShrink: 0 }}
-              >×</button>
-            )}
           </div>
+
+          {/* Date filter dropdown */}
+          <div style={{ position: "relative" }}>
+            <select
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              style={{
+                appearance: "none",
+                WebkitAppearance: "none",
+                background: "#111",
+                border: "1px solid #2a2a2a",
+                borderRadius: "8px",
+                padding: "8px 32px 8px 12px",
+                color: dateFilter === "all" ? "#555" : "#33b5b5",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                outline: "none",
+                colorScheme: "dark",
+              }}
+            >
+              <option value="all">All Time</option>
+              <option value="today">Today</option>
+              <option value="this_week">This Week</option>
+              <option value="this_month">This Month</option>
+              <option value="custom">Custom Range</option>
+            </select>
+            <ChevronDown
+              size={13}
+              color="#555"
+              style={{
+                position: "absolute",
+                right: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+
+          {dateFilter === "custom" && (
+            <>
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                style={{
+                  background: "#111",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "8px",
+                  padding: "7px 10px",
+                  color: customFrom ? "#e0e0e0" : "#555",
+                  fontSize: "12px",
+                  outline: "none",
+                  colorScheme: "dark",
+                }}
+              />
+              <span style={{ color: "#444", fontSize: "12px" }}>to</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                style={{
+                  background: "#111",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "8px",
+                  padding: "7px 10px",
+                  color: customTo ? "#e0e0e0" : "#555",
+                  fontSize: "12px",
+                  outline: "none",
+                  colorScheme: "dark",
+                }}
+              />
+              {(customFrom || customTo) && (
+                <button
+                  onClick={() => {
+                    setCustomFrom("");
+                    setCustomTo("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#555",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    padding: "0 2px",
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </>
+          )}
+
+          {dateFilter !== "all" && (
+            <button
+              onClick={() => {
+                setDateFilter("all");
+                setCustomFrom("");
+                setCustomTo("");
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                background: "rgba(51,181,181,0.1)",
+                border: "1px solid rgba(51,181,181,0.3)",
+                borderRadius: "6px",
+                padding: "5px 10px",
+                color: "#33b5b5",
+                fontSize: "11px",
+                fontWeight: "600",
+                cursor: "pointer",
+              }}
+            >
+              {FILTER_LABELS[dateFilter]} ×
+            </button>
+          )}
         </div>
       </div>
 
@@ -371,20 +816,7 @@ export default function Bookings({ isMobile }) {
 
       {/* Booking Cards */}
       {!bookingsLoading &&
-        bookings
-        .filter((b) => {
-          const q = search.trim().toLowerCase();
-          if (q && !(
-            (b.name || "").toLowerCase().includes(q) ||
-            (b.phone || "").toLowerCase().includes(q) ||
-            (b.email || "").toLowerCase().includes(q)
-          )) return false;
-          const submittedDate = b.created_at ? b.created_at.slice(0, 10) : "";
-          if (dateFrom && submittedDate < dateFrom) return false;
-          if (dateTo && submittedDate > dateTo) return false;
-          return true;
-        })
-        .map((b) => {
+        filteredBookings.map((b) => {
           const s = STATUS_COLORS[b.status] || STATUS_COLORS.pending;
           const totalAddonCost = (b.addons || []).reduce(
             (sum, a) => sum + (a.price || 0),
@@ -478,7 +910,17 @@ export default function Bookings({ isMobile }) {
                           : "Docs Pending"}
                       </span>
                       {b.discount > 0 && (
-                        <span style={{ fontSize: "10px", fontWeight: "700", padding: "2px 8px", borderRadius: "20px", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.3)", color: "#10b981" }}>
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            fontWeight: "700",
+                            padding: "2px 8px",
+                            borderRadius: "20px",
+                            background: "rgba(16,185,129,0.12)",
+                            border: "1px solid rgba(16,185,129,0.3)",
+                            color: "#10b981",
+                          }}
+                        >
                           {b.discount}% off
                         </span>
                       )}
@@ -527,7 +969,9 @@ export default function Bookings({ isMobile }) {
                   </select>
                   {b.docs_status === "received" ? (
                     <button
-                      onClick={() => setDocsModal({ ...getDocUrls(b.id), bookingId: b.id })}
+                      onClick={() =>
+                        setDocsModal({ ...getDocUrls(b.id), bookingId: b.id })
+                      }
                       style={{
                         background: "none",
                         border: "none",
@@ -570,8 +1014,20 @@ export default function Bookings({ isMobile }) {
                   )}
                   {b.docs_status !== "received" && (
                     <button
-                      onClick={() => window.open(`${window.location.origin}/upload?id=${b.id}`, "_blank")}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#888", display: "flex", padding: "4px" }}
+                      onClick={() =>
+                        window.open(
+                          `${window.location.origin}/upload?id=${b.id}`,
+                          "_blank"
+                        )
+                      }
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        color: "#888",
+                        display: "flex",
+                        padding: "4px",
+                      }}
                       title="Open upload link directly"
                     >
                       <Upload size={15} />
@@ -579,7 +1035,14 @@ export default function Bookings({ isMobile }) {
                   )}
                   <button
                     onClick={() => openAddonModal(b)}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "#444", display: "flex", padding: "4px" }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "#444",
+                      display: "flex",
+                      padding: "4px",
+                    }}
                     title="Edit Add-ons"
                   >
                     <LayoutList size={15} />
@@ -733,7 +1196,16 @@ export default function Bookings({ isMobile }) {
                           padding: "8px 14px",
                         }}
                       >
-                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", display: "inline-block", flexShrink: 0 }} />
+                        <span
+                          style={{
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            background: "#10b981",
+                            display: "inline-block",
+                            flexShrink: 0,
+                          }}
+                        />
                         <div>
                           <p
                             style={{
@@ -769,7 +1241,16 @@ export default function Bookings({ isMobile }) {
                           padding: "8px 14px",
                         }}
                       >
-                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444", display: "inline-block", flexShrink: 0 }} />
+                        <span
+                          style={{
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            background: "#ef4444",
+                            display: "inline-block",
+                            flexShrink: 0,
+                          }}
+                        />
                         <div>
                           <p
                             style={{
@@ -837,88 +1318,413 @@ export default function Bookings({ isMobile }) {
                     return Math.max(0, Math.round(diff / 86400000));
                   })();
                   return (
-                    <div style={{ borderTop: "1px solid #1a1a1a", paddingTop: "14px", marginBottom: "14px" }}>
-                      <p style={{ fontSize: "11px", fontWeight: "700", color: "#444", letterSpacing: "0.08em", marginBottom: "10px" }}>BILLING</p>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "5px", fontSize: "13px" }}>
+                    <div
+                      style={{
+                        borderTop: "1px solid #1a1a1a",
+                        paddingTop: "14px",
+                        marginBottom: "14px",
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: "700",
+                          color: "#444",
+                          letterSpacing: "0.08em",
+                          marginBottom: "10px",
+                        }}
+                      >
+                        BILLING
+                      </p>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "5px",
+                          fontSize: "13px",
+                        }}
+                      >
                         {nights > 0 && (
-                          <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span style={{ color: "#666" }}>Room ({nights} night{nights > 1 ? "s" : ""})</span>
-                            <span style={{ color: "#ccc" }}>{fmtR(fin.roomRaw)}</span>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <span style={{ color: "#666" }}>
+                              Room ({nights} night{nights > 1 ? "s" : ""})
+                            </span>
+                            <span style={{ color: "#ccc" }}>
+                              {fmtR(fin.roomRaw)}
+                            </span>
                           </div>
                         )}
                         {fin.addonRaw > 0 && (
-                          <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span style={{ color: "#666" }}>Add-ons ({(b.addons || []).length})</span>
-                            <span style={{ color: "#ccc" }}>{fmtR(fin.addonRaw)}</span>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <span style={{ color: "#666" }}>
+                              Add-ons ({(b.addons || []).length})
+                            </span>
+                            <span style={{ color: "#ccc" }}>
+                              {fmtR(fin.addonRaw)}
+                            </span>
                           </div>
                         )}
                         {fin.totalDiscountPct > 0 && (
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                            <span style={{ color: "#10b981", lineHeight: "1.5" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "flex-start",
+                            }}
+                          >
+                            <span
+                              style={{ color: "#10b981", lineHeight: "1.5" }}
+                            >
                               Discount ({fin.totalDiscountPct}%
-                              {b.discount > 0 ? ` — ${b.discount}% first-time` : ""}
-                              {b.promo_code ? ` + ${b.promo_discount}% ${b.promo_code}` : ""})
-                              {Math.round((calcRoomCost(b.check_in, b.check_out) + (b.addons||[]).reduce((s,a)=>s+(a.price||0),0)) * fin.totalDiscountPct / 100) > MAX_DISCOUNT && (
-                                <span style={{ display: "block", fontSize: "11px", opacity: 0.7 }}>Upto ₹{MAX_DISCOUNT} off</span>
+                              {b.discount > 0
+                                ? ` — ${b.discount}% first-time`
+                                : ""}
+                              {b.promo_code
+                                ? ` + ${b.promo_discount}% ${b.promo_code}`
+                                : ""}
+                              )
+                              {Math.round(
+                                ((calcRoomCost(b.check_in, b.check_out) +
+                                  (b.addons || []).reduce(
+                                    (s, a) => s + (a.price || 0),
+                                    0
+                                  )) *
+                                  fin.totalDiscountPct) /
+                                  100
+                              ) > MAX_DISCOUNT && (
+                                <span
+                                  style={{
+                                    display: "block",
+                                    fontSize: "11px",
+                                    opacity: 0.7,
+                                  }}
+                                >
+                                  Upto ₹{MAX_DISCOUNT} off
+                                </span>
                               )}
                             </span>
-                            <span style={{ color: "#10b981", flexShrink: 0, marginLeft: "8px" }}>−{fmtR(fin.discountAmt)}</span>
+                            <span
+                              style={{
+                                color: "#10b981",
+                                flexShrink: 0,
+                                marginLeft: "8px",
+                              }}
+                            >
+                              −{fmtR(fin.discountAmt)}
+                            </span>
                           </div>
                         )}
-                        <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #1e1e1e", paddingTop: "6px", fontWeight: "700" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            borderTop: "1px solid #1e1e1e",
+                            paddingTop: "6px",
+                            fontWeight: "700",
+                          }}
+                        >
                           <span style={{ color: "#888" }}>Total Due</span>
-                          <span style={{ color: "#f0f0f0" }}>{fmtR(fin.totalDue)}</span>
+                          <span style={{ color: "#f0f0f0" }}>
+                            {fmtR(fin.totalDue)}
+                          </span>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                          }}
+                        >
                           <span style={{ color: "#666" }}>Paid</span>
-                          <span style={{ color: "#10b981", fontWeight: "600" }}>{fmtR(fin.totalPaid)}</span>
+                          <span style={{ color: "#10b981", fontWeight: "600" }}>
+                            {fmtR(fin.totalPaid)}
+                          </span>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", background: fin.balance <= 0 ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)", border: `1px solid ${fin.balance <= 0 ? "rgba(16,185,129,0.25)" : "rgba(239,68,68,0.25)"}`, borderRadius: "7px", padding: "7px 10px", marginTop: "2px" }}>
-                          <span style={{ color: fin.balance <= 0 ? "#10b981" : "#ef4444", fontWeight: "700", fontSize: "13px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            background:
+                              fin.balance <= 0
+                                ? "rgba(16,185,129,0.08)"
+                                : "rgba(239,68,68,0.08)",
+                            border: `1px solid ${
+                              fin.balance <= 0
+                                ? "rgba(16,185,129,0.25)"
+                                : "rgba(239,68,68,0.25)"
+                            }`,
+                            borderRadius: "7px",
+                            padding: "7px 10px",
+                            marginTop: "2px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: fin.balance <= 0 ? "#10b981" : "#ef4444",
+                              fontWeight: "700",
+                              fontSize: "13px",
+                            }}
+                          >
                             {fin.balance <= 0 ? "Cleared" : "Balance Due"}
                           </span>
-                          <span style={{ color: fin.balance <= 0 ? "#10b981" : "#ef4444", fontWeight: "800", fontSize: "14px" }}>
+                          <span
+                            style={{
+                              color: fin.balance <= 0 ? "#10b981" : "#ef4444",
+                              fontWeight: "800",
+                              fontSize: "14px",
+                            }}
+                          >
                             {fin.balance <= 0 ? fmtR(0) : fmtR(fin.balance)}
                           </span>
                         </div>
                       </div>
 
                       {/* Promo Code */}
-                      <div style={{ marginTop: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span style={{ fontSize: "11px", color: "#555", fontWeight: "600", flexShrink: 0 }}>Promo:</span>
+                      <div
+                        style={{
+                          marginTop: "12px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            color: "#555",
+                            fontWeight: "600",
+                            flexShrink: 0,
+                          }}
+                        >
+                          Promo:
+                        </span>
                         {promoBookingId === b.id ? (
                           <>
                             <select
                               value={promoSelected}
                               onChange={(e) => setPromoSelected(e.target.value)}
-                              style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "6px", color: "#e0e0e0", fontSize: "12px", padding: "5px 8px", flex: 1, colorScheme: "dark" }}
+                              style={{
+                                background: "#1a1a1a",
+                                border: "1px solid #2a2a2a",
+                                borderRadius: "6px",
+                                color: "#e0e0e0",
+                                fontSize: "12px",
+                                padding: "5px 8px",
+                                flex: 1,
+                                colorScheme: "dark",
+                              }}
                             >
                               <option value="">— No promo —</option>
-                              {promoCodes.filter((p) => p.active).map((p) => (
-                                <option key={p.code} value={p.code}>{p.code} ({p.discount_percent}% off)</option>
-                              ))}
+                              {promoCodes
+                                .filter((p) => p.active)
+                                .map((p) => (
+                                  <option key={p.code} value={p.code}>
+                                    {p.code} ({p.discount_percent}% off)
+                                  </option>
+                                ))}
                             </select>
                             <button
                               disabled={promoApplying}
                               onClick={async () => {
                                 setPromoApplying(true);
-                                await applyPromoToBooking(b.id, promoSelected || null);
+                                await applyPromoToBooking(
+                                  b.id,
+                                  promoSelected || null
+                                );
                                 setPromoApplying(false);
                                 setPromoBookingId(null);
                               }}
-                              style={{ background: "rgba(0,128,128,0.15)", border: "1px solid rgba(0,128,128,0.4)", borderRadius: "6px", color: "#33b5b5", fontSize: "12px", fontWeight: "700", padding: "5px 10px", cursor: "pointer", flexShrink: 0 }}
-                            >{promoApplying ? "..." : "Save"}</button>
-                            <button onClick={() => setPromoBookingId(null)} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: "16px", padding: "0 4px" }}>×</button>
+                              style={{
+                                background: "rgba(0,128,128,0.15)",
+                                border: "1px solid rgba(0,128,128,0.4)",
+                                borderRadius: "6px",
+                                color: "#33b5b5",
+                                fontSize: "12px",
+                                fontWeight: "700",
+                                padding: "5px 10px",
+                                cursor: "pointer",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {promoApplying ? "..." : "Save"}
+                            </button>
+                            <button
+                              onClick={() => setPromoBookingId(null)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#555",
+                                cursor: "pointer",
+                                fontSize: "16px",
+                                padding: "0 4px",
+                              }}
+                            >
+                              ×
+                            </button>
                           </>
                         ) : (
                           <button
-                            onClick={() => { setPromoBookingId(b.id); setPromoSelected(b.promo_code || ""); }}
-                            style={{ background: "none", border: "1px solid #2a2a2a", borderRadius: "6px", color: b.promo_code ? "#33b5b5" : "#555", fontSize: "12px", padding: "4px 10px", cursor: "pointer" }}
+                            onClick={() => {
+                              setPromoBookingId(b.id);
+                              setPromoSelected(b.promo_code || "");
+                            }}
+                            style={{
+                              background: "none",
+                              border: "1px solid #2a2a2a",
+                              borderRadius: "6px",
+                              color: b.promo_code ? "#33b5b5" : "#555",
+                              fontSize: "12px",
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                            }}
                           >
-                            {b.promo_code ? `${b.promo_code} (${b.promo_discount}% off)` : "Apply promo"}
+                            {b.promo_code
+                              ? `${b.promo_code} (${b.promo_discount}% off)`
+                              : "Apply promo"}
                           </button>
                         )}
                       </div>
+
+                      {/* Broker Info */}
+                      {b.broker_name && (
+                        <div
+                          style={{
+                            marginTop: "12px",
+                            padding: "10px 12px",
+                            background: "#1a1a1a",
+                            border: "1px solid #2a2a2a",
+                            borderRadius: "8px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              flexWrap: "wrap",
+                              gap: "8px",
+                            }}
+                          >
+                            <div>
+                              <p
+                                style={{
+                                  fontSize: "11px",
+                                  color: "#555",
+                                  fontWeight: "600",
+                                  letterSpacing: "0.06em",
+                                  marginBottom: "3px",
+                                }}
+                              >
+                                BROKER
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: "13px",
+                                  color: "#e0e0e0",
+                                  fontWeight: "600",
+                                }}
+                              >
+                                {b.broker_name}
+                              </p>
+                              {b.broker_phone && (
+                                <p
+                                  style={{
+                                    fontSize: "11px",
+                                    color: "#555",
+                                    marginTop: "1px",
+                                  }}
+                                >
+                                  {b.broker_phone}
+                                </p>
+                              )}
+                            </div>
+                            {b.broker_commission > 0 && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                }}
+                              >
+                                <div style={{ textAlign: "right" }}>
+                                  <p
+                                    style={{
+                                      fontSize: "12px",
+                                      color: b.broker_commission_paid
+                                        ? "#34d399"
+                                        : "#f59e0b",
+                                      fontWeight: "700",
+                                    }}
+                                  >
+                                    ₹
+                                    {Number(b.broker_commission).toLocaleString(
+                                      "en-IN"
+                                    )}{" "}
+                                    commission
+                                  </p>
+                                  <p
+                                    style={{
+                                      fontSize: "10px",
+                                      color: b.broker_commission_paid
+                                        ? "#34d399"
+                                        : "#f59e0b",
+                                      marginTop: "1px",
+                                    }}
+                                  >
+                                    {b.broker_commission_paid
+                                      ? "Paid"
+                                      : "Pending"}
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    setBrokerPayId(b.id);
+                                    await markBrokerCommissionPaid(
+                                      b.id,
+                                      !b.broker_commission_paid
+                                    );
+                                    setBrokerPayId(null);
+                                  }}
+                                  disabled={brokerPayId === b.id}
+                                  style={{
+                                    padding: "5px 10px",
+                                    borderRadius: "6px",
+                                    fontSize: "11px",
+                                    fontWeight: "600",
+                                    cursor: "pointer",
+                                    background: b.broker_commission_paid
+                                      ? "rgba(239,68,68,0.1)"
+                                      : "rgba(16,185,129,0.1)",
+                                    border: `1px solid ${
+                                      b.broker_commission_paid
+                                        ? "rgba(239,68,68,0.3)"
+                                        : "rgba(16,185,129,0.3)"
+                                    }`,
+                                    color: b.broker_commission_paid
+                                      ? "#ef4444"
+                                      : "#34d399",
+                                  }}
+                                >
+                                  {brokerPayId === b.id
+                                    ? "..."
+                                    : b.broker_commission_paid
+                                    ? "Mark Unpaid"
+                                    : "Mark Paid"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -1142,6 +1948,774 @@ export default function Bookings({ isMobile }) {
           );
         })}
 
+      {/* ── Create Booking Modal ── */}
+      {showCreate && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            zIndex: 300,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+          }}
+        >
+          <div
+            style={{
+              background: "#111",
+              border: "1px solid #2a2a2a",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "500px",
+              overflow: "hidden",
+              maxHeight: "90vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {/* Header */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "18px 20px",
+                borderBottom: "1px solid #1e1e1e",
+                flexShrink: 0,
+              }}
+            >
+              <div>
+                <p
+                  style={{
+                    fontWeight: "700",
+                    color: "#f0f0f0",
+                    fontSize: "16px",
+                  }}
+                >
+                  Create Booking
+                </p>
+                <p
+                  style={{ fontSize: "12px", color: "#555", marginTop: "2px" }}
+                >
+                  Walk-in or direct booking
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCreate(false);
+                  setCreateError("");
+                  setCreateAddons([]);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#555",
+                  cursor: "pointer",
+                  display: "flex",
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div
+              style={{
+                padding: "20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "14px",
+                overflowY: "auto",
+              }}
+            >
+              {/* Name + Phone */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                  gap: "12px",
+                }}
+              >
+                <div>
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginBottom: "5px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Guest Name *
+                  </p>
+                  <input
+                    value={createForm.name}
+                    onChange={(e) =>
+                      setCreateForm({ ...createForm, name: e.target.value })
+                    }
+                    placeholder="Full name"
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginBottom: "5px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Phone *
+                  </p>
+                  <input
+                    value={createForm.phone}
+                    onChange={(e) => {
+                      setCreateForm({ ...createForm, phone: e.target.value });
+                      setCreateError("");
+                    }}
+                    placeholder="+91 00000 00000"
+                    style={inputStyle}
+                  />
+                  {createError === "Phone must be 10 digits." && (
+                    <p
+                      style={{
+                        fontSize: "11px",
+                        color: "#ef4444",
+                        marginTop: "4px",
+                      }}
+                    >
+                      Phone must be 10 digits.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Email */}
+              <div>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#555",
+                    marginBottom: "5px",
+                    fontWeight: "500",
+                  }}
+                >
+                  Email
+                </p>
+                <input
+                  type="email"
+                  value={createForm.email}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, email: e.target.value })
+                  }
+                  placeholder="guest@email.com"
+                  style={inputStyle}
+                />
+              </div>
+
+              {/* Check-in / Check-out */}
+              {(() => {
+                const today = new Date().toISOString().split("T")[0];
+                const minCheckout = createForm.check_in
+                  ? new Date(new Date(createForm.check_in).getTime() + 86400000)
+                      .toISOString()
+                      .split("T")[0]
+                  : today;
+                return (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: "12px",
+                    }}
+                  >
+                    <div>
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          marginBottom: "5px",
+                          fontWeight: "500",
+                        }}
+                      >
+                        Check-in *
+                      </p>
+                      <input
+                        type="date"
+                        value={createForm.check_in}
+                        min={today}
+                        onChange={(e) => {
+                          const ci = e.target.value;
+                          const minCo = new Date(
+                            new Date(ci).getTime() + 86400000
+                          )
+                            .toISOString()
+                            .split("T")[0];
+                          setCreateForm((f) => ({
+                            ...f,
+                            check_in: ci,
+                            check_out: f.check_out < minCo ? "" : f.check_out,
+                          }));
+                        }}
+                        style={{ ...inputStyle, colorScheme: "dark" }}
+                      />
+                    </div>
+                    <div>
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          marginBottom: "5px",
+                          fontWeight: "500",
+                        }}
+                      >
+                        Check-out *
+                      </p>
+                      <input
+                        type="date"
+                        value={createForm.check_out}
+                        min={minCheckout}
+                        onChange={(e) =>
+                          setCreateForm({
+                            ...createForm,
+                            check_out: e.target.value,
+                          })
+                        }
+                        style={{ ...inputStyle, colorScheme: "dark" }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Guests + Status */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "12px",
+                }}
+              >
+                <div>
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginBottom: "5px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Guests
+                  </p>
+                  <select
+                    value={createForm.guests_count}
+                    onChange={(e) =>
+                      setCreateForm({
+                        ...createForm,
+                        guests_count: Number(e.target.value),
+                      })
+                    }
+                    style={{ ...inputStyle, cursor: "pointer" }}
+                  >
+                    <option value={1}>1 Guest</option>
+                    <option value={2}>2 Guests</option>
+                    <option value={3}>3 Guests</option>
+                  </select>
+                </div>
+                <div>
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginBottom: "5px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Status
+                  </p>
+                  <select
+                    value={createForm.status}
+                    onChange={(e) =>
+                      setCreateForm({ ...createForm, status: e.target.value })
+                    }
+                    style={{
+                      ...inputStyle,
+                      cursor: "pointer",
+                      color:
+                        STATUS_COLORS[createForm.status]?.color || "#e0e0e0",
+                    }}
+                  >
+                    {STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#555",
+                    marginBottom: "5px",
+                    fontWeight: "500",
+                  }}
+                >
+                  Notes
+                </p>
+                <textarea
+                  value={createForm.notes}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, notes: e.target.value })
+                  }
+                  placeholder="Any special requests or notes..."
+                  style={{ ...inputStyle, resize: "vertical", height: "72px" }}
+                />
+              </div>
+
+              {/* Custom Room Price */}
+              <div
+                style={{
+                  padding: "12px 14px",
+                  background: "#1a1a1a",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "8px",
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!createForm.useCustomPrice}
+                    onChange={(e) =>
+                      setCreateForm({
+                        ...createForm,
+                        useCustomPrice: e.target.checked,
+                        custom_room_price: "",
+                      })
+                    }
+                    style={{
+                      width: "15px",
+                      height: "15px",
+                      accentColor: "#008080",
+                      cursor: "pointer",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "13px",
+                      color: "#ccc",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Custom room price
+                  </span>
+                </label>
+                {createForm.useCustomPrice && (
+                  <div
+                    style={{
+                      marginTop: "10px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                    }}
+                  >
+                    <div>
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          marginBottom: "5px",
+                          fontWeight: "500",
+                        }}
+                      >
+                        Price per night (₹) *
+                      </p>
+                      <input
+                        type="number"
+                        value={createForm.custom_room_price || ""}
+                        onChange={(e) =>
+                          setCreateForm({
+                            ...createForm,
+                            custom_room_price: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. 2000"
+                        style={inputStyle}
+                      />
+                    </div>
+                    {/* Broker Details (optional) */}
+                    <div
+                      style={{
+                        borderTop: "1px solid #222",
+                        paddingTop: "10px",
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          fontWeight: "600",
+                          letterSpacing: "0.06em",
+                          marginBottom: "8px",
+                        }}
+                      >
+                        BROKER DETAILS{" "}
+                        <span style={{ color: "#444", fontWeight: "400" }}>
+                          (optional)
+                        </span>
+                      </p>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "10px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: "10px",
+                          }}
+                        >
+                          <div>
+                            <p
+                              style={{
+                                fontSize: "11px",
+                                color: "#555",
+                                marginBottom: "5px",
+                                fontWeight: "500",
+                              }}
+                            >
+                              Broker Name
+                            </p>
+                            <input
+                              value={createForm.broker_name || ""}
+                              onChange={(e) =>
+                                setCreateForm({
+                                  ...createForm,
+                                  broker_name: e.target.value,
+                                })
+                              }
+                              placeholder="Name"
+                              style={inputStyle}
+                            />
+                          </div>
+                          <div>
+                            <p
+                              style={{
+                                fontSize: "11px",
+                                color: "#555",
+                                marginBottom: "5px",
+                                fontWeight: "500",
+                              }}
+                            >
+                              Broker Phone
+                            </p>
+                            <input
+                              value={createForm.broker_phone || ""}
+                              onChange={(e) =>
+                                setCreateForm({
+                                  ...createForm,
+                                  broker_phone: e.target.value,
+                                })
+                              }
+                              placeholder="Phone"
+                              style={inputStyle}
+                            />
+                          </div>
+                        </div>
+                        {(createForm.broker_name ||
+                          createForm.broker_phone) && (
+                          <div>
+                            <p
+                              style={{
+                                fontSize: "11px",
+                                color: "#555",
+                                marginBottom: "5px",
+                                fontWeight: "500",
+                              }}
+                            >
+                              Commission
+                            </p>
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: "8px",
+                                alignItems: "center",
+                              }}
+                            >
+                              <select
+                                value={createForm.commissionType || "fixed"}
+                                onChange={(e) =>
+                                  setCreateForm({
+                                    ...createForm,
+                                    commissionType: e.target.value,
+                                    broker_commission: "",
+                                  })
+                                }
+                                style={{
+                                  ...inputStyle,
+                                  width: "auto",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <option value="fixed">₹ Fixed</option>
+                                <option value="percent">% of room</option>
+                              </select>
+                              <input
+                                type="number"
+                                value={createForm.broker_commission || ""}
+                                onChange={(e) =>
+                                  setCreateForm({
+                                    ...createForm,
+                                    broker_commission: e.target.value,
+                                  })
+                                }
+                                placeholder={
+                                  createForm.commissionType === "percent"
+                                    ? "e.g. 10"
+                                    : "e.g. 200"
+                                }
+                                style={inputStyle}
+                              />
+                              {createForm.commissionType === "percent" &&
+                                createForm.broker_commission &&
+                                createForm.custom_room_price && (
+                                  <span
+                                    style={{
+                                      fontSize: "12px",
+                                      color: "#33b5b5",
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    = ₹
+                                    {Math.round(
+                                      (Number(createForm.custom_room_price) *
+                                        Number(createForm.broker_commission)) /
+                                        100
+                                    ).toLocaleString("en-IN")}
+                                  </span>
+                                )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Add-ons */}
+              <div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "8px",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      fontWeight: "600",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    ADD-ONS
+                  </p>
+                  {createAddons.length > 0 && (
+                    <span style={{ fontSize: "11px", color: "#33b5b5" }}>
+                      {createAddons.length} selected · ₹
+                      {createAddons
+                        .reduce((s, a) => s + (a.price || 0), 0)
+                        .toLocaleString("en-IN")}
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                  }}
+                >
+                  {ALL_ADDONS.map((addon) => {
+                    const active = createAddons.some((a) => a.id === addon.id);
+                    return (
+                      <div
+                        key={addon.id}
+                        onClick={() => {
+                          setCreateAddons((prev) =>
+                            active
+                              ? prev.filter((a) => a.id !== addon.id)
+                              : [
+                                  ...prev,
+                                  {
+                                    id: addon.id,
+                                    label: addon.label,
+                                    price: addon.price,
+                                  },
+                                ]
+                          );
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "9px 12px",
+                          borderRadius: "8px",
+                          cursor: "pointer",
+                          background: active
+                            ? "rgba(0,128,128,0.08)"
+                            : "#1a1a1a",
+                          border: `1px solid ${
+                            active ? "rgba(0,128,128,0.4)" : "#2a2a2a"
+                          }`,
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span style={{ fontSize: "15px" }}>{addon.icon}</span>
+                          <span
+                            style={{
+                              fontSize: "12px",
+                              color: active ? "#e0e0e0" : "#666",
+                            }}
+                          >
+                            {addon.label}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span style={{ fontSize: "11px", color: "#33b5b5" }}>
+                            ₹{addon.price.toLocaleString("en-IN")}
+                          </span>
+                          <div
+                            style={{
+                              width: "15px",
+                              height: "15px",
+                              borderRadius: "4px",
+                              background: active ? "#008080" : "transparent",
+                              border: `1.5px solid ${
+                                active ? "#008080" : "#333"
+                              }`,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            {active && (
+                              <span
+                                style={{
+                                  color: "#fff",
+                                  fontSize: "9px",
+                                  fontWeight: "900",
+                                }}
+                              >
+                                ✓
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {createError && createError !== "Phone must be 10 digits." && (
+                <p
+                  style={{
+                    fontSize: "13px",
+                    color: "#ef4444",
+                    padding: "8px 12px",
+                    background: "rgba(239,68,68,0.08)",
+                    border: "1px solid rgba(239,68,68,0.25)",
+                    borderRadius: "8px",
+                  }}
+                >
+                  {createError}
+                </p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                padding: "16px 20px",
+                borderTop: "1px solid #1e1e1e",
+                flexShrink: 0,
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowCreate(false);
+                  setCreateError("");
+                  setCreateAddons([]);
+                }}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  background: "transparent",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "8px",
+                  color: "#555",
+                  fontSize: "14px",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={createSaving}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  background: "linear-gradient(135deg, #008080, #00a0a0)",
+                  border: "none",
+                  borderRadius: "8px",
+                  color: "#fff",
+                  fontSize: "14px",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                }}
+              >
+                {createSaving ? "Creating..." : "Create Booking"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Edit Booking Modal ── */}
       {editId && (
         <div
@@ -1162,7 +2736,10 @@ export default function Bookings({ isMobile }) {
               border: "1px solid #2a2a2a",
               borderRadius: "16px",
               width: "100%",
-              maxWidth: "480px",
+              maxWidth: "460px",
+              maxHeight: "88vh",
+              display: "flex",
+              flexDirection: "column",
               overflow: "hidden",
             }}
           >
@@ -1203,6 +2780,8 @@ export default function Bookings({ isMobile }) {
                 display: "flex",
                 flexDirection: "column",
                 gap: "14px",
+                overflowY: "auto",
+                flex: 1,
               }}
             >
               {[
@@ -1213,21 +2792,67 @@ export default function Bookings({ isMobile }) {
                 { label: "Check-out", key: "check_out", type: "date" },
               ].map(({ label, key, type }) => (
                 <div key={key}>
-                  <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>{label}</p>
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      marginBottom: "5px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    {label}
+                  </p>
                   <input
                     type={type}
                     value={editForm[key]}
-                    onChange={(e) => setEditForm({ ...editForm, [key]: e.target.value })}
-                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "9px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", boxSizing: "border-box", colorScheme: "dark" }}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, [key]: e.target.value })
+                    }
+                    style={{
+                      width: "100%",
+                      background: "#1a1a1a",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: "8px",
+                      padding: "9px 12px",
+                      color: "#e0e0e0",
+                      fontSize: "14px",
+                      outline: "none",
+                      boxSizing: "border-box",
+                      colorScheme: "dark",
+                    }}
                   />
                 </div>
               ))}
               <div>
-                <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>Guests (max 3)</p>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#555",
+                    marginBottom: "5px",
+                    fontWeight: "500",
+                  }}
+                >
+                  Guests (max 3)
+                </p>
                 <select
                   value={editForm.guests_count}
-                  onChange={(e) => setEditForm({ ...editForm, guests_count: Number(e.target.value) })}
-                  style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "9px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", boxSizing: "border-box" }}
+                  onChange={(e) =>
+                    setEditForm({
+                      ...editForm,
+                      guests_count: Number(e.target.value),
+                    })
+                  }
+                  style={{
+                    width: "100%",
+                    background: "#1a1a1a",
+                    border: "1px solid #2a2a2a",
+                    borderRadius: "8px",
+                    padding: "9px 12px",
+                    color: "#e0e0e0",
+                    fontSize: "14px",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
                 >
                   <option value={1}>1 Guest</option>
                   <option value={2}>2 Guests</option>
@@ -1264,6 +2889,312 @@ export default function Bookings({ isMobile }) {
                     boxSizing: "border-box",
                   }}
                 />
+              </div>
+              {/* Custom Room Price + Broker */}
+              <div
+                style={{ borderTop: "1px solid #1e1e1e", paddingTop: "14px" }}
+              >
+                <div
+                  style={{
+                    padding: "12px 14px",
+                    background: "#1a1a1a",
+                    border: "1px solid #2a2a2a",
+                    borderRadius: "8px",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!editForm.useCustomPrice}
+                      onChange={(e) =>
+                        setEditForm({
+                          ...editForm,
+                          useCustomPrice: e.target.checked,
+                          custom_room_price: "",
+                          broker_name: "",
+                          broker_phone: "",
+                          broker_commission: "",
+                          commissionType: "fixed",
+                        })
+                      }
+                      style={{
+                        width: "15px",
+                        height: "15px",
+                        accentColor: "#008080",
+                        cursor: "pointer",
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontSize: "13px",
+                        color: "#ccc",
+                        fontWeight: "500",
+                      }}
+                    >
+                      Custom room price (broker deal)
+                    </span>
+                  </label>
+                  {editForm.useCustomPrice && (
+                    <div
+                      style={{
+                        marginTop: "10px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "10px",
+                      }}
+                    >
+                      <div>
+                        <p
+                          style={{
+                            fontSize: "11px",
+                            color: "#555",
+                            marginBottom: "5px",
+                            fontWeight: "500",
+                          }}
+                        >
+                          Price per night (₹) *
+                        </p>
+                        <input
+                          type="number"
+                          value={editForm.custom_room_price || ""}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              custom_room_price: e.target.value,
+                            })
+                          }
+                          placeholder="e.g. 2000"
+                          style={{
+                            width: "100%",
+                            background: "#141414",
+                            border: "1px solid #2a2a2a",
+                            borderRadius: "8px",
+                            padding: "9px 12px",
+                            color: "#e0e0e0",
+                            fontSize: "14px",
+                            outline: "none",
+                            boxSizing: "border-box",
+                          }}
+                        />
+                      </div>
+                      {/* Broker Details */}
+                      <div
+                        style={{
+                          borderTop: "1px solid #222",
+                          paddingTop: "10px",
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontSize: "11px",
+                            color: "#555",
+                            fontWeight: "600",
+                            letterSpacing: "0.06em",
+                            marginBottom: "8px",
+                          }}
+                        >
+                          BROKER DETAILS{" "}
+                          <span style={{ color: "#444", fontWeight: "400" }}>
+                            (optional)
+                          </span>
+                        </p>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "10px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: "10px",
+                            }}
+                          >
+                            <div>
+                              <p
+                                style={{
+                                  fontSize: "11px",
+                                  color: "#555",
+                                  marginBottom: "5px",
+                                  fontWeight: "500",
+                                }}
+                              >
+                                Broker Name
+                              </p>
+                              <input
+                                value={editForm.broker_name}
+                                onChange={(e) =>
+                                  setEditForm({
+                                    ...editForm,
+                                    broker_name: e.target.value,
+                                  })
+                                }
+                                placeholder="e.g. Ravi Sharma"
+                                style={{
+                                  width: "100%",
+                                  background: "#141414",
+                                  border: "1px solid #2a2a2a",
+                                  borderRadius: "8px",
+                                  padding: "9px 12px",
+                                  color: "#e0e0e0",
+                                  fontSize: "14px",
+                                  outline: "none",
+                                  boxSizing: "border-box",
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <p
+                                style={{
+                                  fontSize: "11px",
+                                  color: "#555",
+                                  marginBottom: "5px",
+                                  fontWeight: "500",
+                                }}
+                              >
+                                Broker Phone
+                              </p>
+                              <input
+                                value={editForm.broker_phone}
+                                onChange={(e) =>
+                                  setEditForm({
+                                    ...editForm,
+                                    broker_phone: e.target.value,
+                                  })
+                                }
+                                placeholder="+91 00000 00000"
+                                style={{
+                                  width: "100%",
+                                  background: "#141414",
+                                  border: "1px solid #2a2a2a",
+                                  borderRadius: "8px",
+                                  padding: "9px 12px",
+                                  color: "#e0e0e0",
+                                  fontSize: "14px",
+                                  outline: "none",
+                                  boxSizing: "border-box",
+                                }}
+                              />
+                              {editForm.broker_phone &&
+                                editForm.broker_phone.replace(/\D/g, "")
+                                  .length > 0 &&
+                                editForm.broker_phone.replace(/\D/g, "")
+                                  .length !== 10 && (
+                                  <p
+                                    style={{
+                                      fontSize: "11px",
+                                      color: "#ef4444",
+                                      marginTop: "4px",
+                                    }}
+                                  >
+                                    Phone must be 10 digits.
+                                  </p>
+                                )}
+                            </div>
+                          </div>
+                          {(editForm.broker_name || editForm.broker_phone) && (
+                            <div>
+                              <p
+                                style={{
+                                  fontSize: "11px",
+                                  color: "#555",
+                                  marginBottom: "5px",
+                                  fontWeight: "500",
+                                }}
+                              >
+                                Commission
+                              </p>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: "8px",
+                                  alignItems: "center",
+                                }}
+                              >
+                                <select
+                                  value={editForm.commissionType}
+                                  onChange={(e) =>
+                                    setEditForm({
+                                      ...editForm,
+                                      commissionType: e.target.value,
+                                      broker_commission: "",
+                                    })
+                                  }
+                                  style={{
+                                    background: "#141414",
+                                    border: "1px solid #2a2a2a",
+                                    borderRadius: "8px",
+                                    padding: "9px 10px",
+                                    color: "#e0e0e0",
+                                    fontSize: "13px",
+                                    outline: "none",
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <option value="fixed">₹ Fixed</option>
+                                  <option value="percent">% of room</option>
+                                </select>
+                                <input
+                                  type="number"
+                                  value={editForm.broker_commission}
+                                  onChange={(e) =>
+                                    setEditForm({
+                                      ...editForm,
+                                      broker_commission: e.target.value,
+                                    })
+                                  }
+                                  placeholder={
+                                    editForm.commissionType === "percent"
+                                      ? "e.g. 10"
+                                      : "e.g. 500"
+                                  }
+                                  style={{
+                                    flex: 1,
+                                    background: "#141414",
+                                    border: "1px solid #2a2a2a",
+                                    borderRadius: "8px",
+                                    padding: "9px 12px",
+                                    color: "#e0e0e0",
+                                    fontSize: "14px",
+                                    outline: "none",
+                                    boxSizing: "border-box",
+                                  }}
+                                />
+                                {editForm.commissionType === "percent" &&
+                                  editForm.broker_commission &&
+                                  editForm.custom_room_price && (
+                                    <span
+                                      style={{
+                                        fontSize: "12px",
+                                        color: "#33b5b5",
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      = ₹
+                                      {Math.round(
+                                        (Number(editForm.custom_room_price) *
+                                          Number(editForm.broker_commission)) /
+                                          100
+                                      ).toLocaleString("en-IN")}
+                                    </span>
+                                  )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div
@@ -1630,46 +3561,169 @@ export default function Bookings({ isMobile }) {
 
       {/* ── Edit Add-ons Modal ── */}
       {addonModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", overflowY: "auto" }}>
-          <div style={{ background: "#111", border: "1px solid #2a2a2a", borderRadius: "16px", width: "100%", maxWidth: "520px", overflow: "hidden", margin: "auto" }}>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            zIndex: 300,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            overflowY: "auto",
+          }}
+        >
+          <div
+            style={{
+              background: "#111",
+              border: "1px solid #2a2a2a",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "520px",
+              overflow: "hidden",
+              margin: "auto",
+            }}
+          >
             {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px", borderBottom: "1px solid #1e1e1e" }}>
-              <p style={{ fontWeight: "700", color: "#f0f0f0", fontSize: "16px" }}>Edit Add-ons</p>
-              <button onClick={() => setAddonModal(null)} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", display: "flex" }}><X size={18} /></button>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "18px 20px",
+                borderBottom: "1px solid #1e1e1e",
+              }}
+            >
+              <p
+                style={{
+                  fontWeight: "700",
+                  color: "#f0f0f0",
+                  fontSize: "16px",
+                }}
+              >
+                Edit Add-ons
+              </p>
+              <button
+                onClick={() => setAddonModal(null)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#555",
+                  cursor: "pointer",
+                  display: "flex",
+                }}
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "18px", maxHeight: "70vh", overflowY: "auto" }}>
+            <div
+              style={{
+                padding: "20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "18px",
+                maxHeight: "70vh",
+                overflowY: "auto",
+              }}
+            >
               {/* Predefined list */}
               <div>
-                <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.08em", marginBottom: "10px" }}>SELECT ADD-ONS</p>
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#444",
+                    fontWeight: "600",
+                    letterSpacing: "0.08em",
+                    marginBottom: "10px",
+                  }}
+                >
+                  SELECT ADD-ONS
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                  }}
+                >
                   {ALL_ADDONS.map((addon) => {
-                    const active = addonModal.addons.some((a) => a.id === addon.id);
+                    const active = addonModal.addons.some(
+                      (a) => a.id === addon.id
+                    );
                     return (
                       <div
                         key={addon.id}
                         onClick={() => toggleAddon(addon)}
                         style={{
-                          display: "flex", alignItems: "center", justifyContent: "space-between",
-                          padding: "10px 14px", borderRadius: "8px", cursor: "pointer",
-                          background: active ? "rgba(0,128,128,0.08)" : "#1a1a1a",
-                          border: `1px solid ${active ? "rgba(0,128,128,0.4)" : "#2a2a2a"}`,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "10px 14px",
+                          borderRadius: "8px",
+                          cursor: "pointer",
+                          background: active
+                            ? "rgba(0,128,128,0.08)"
+                            : "#1a1a1a",
+                          border: `1px solid ${
+                            active ? "rgba(0,128,128,0.4)" : "#2a2a2a"
+                          }`,
                           transition: "all 0.15s",
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                          }}
+                        >
                           <span style={{ fontSize: "16px" }}>{addon.icon}</span>
-                          <span style={{ fontSize: "13px", color: active ? "#e0e0e0" : "#666" }}>{addon.label}</span>
+                          <span
+                            style={{
+                              fontSize: "13px",
+                              color: active ? "#e0e0e0" : "#666",
+                            }}
+                          >
+                            {addon.label}
+                          </span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <span style={{ fontSize: "12px", color: "#33b5b5" }}>₹{addon.price.toLocaleString("en-IN")}</span>
-                          <div style={{
-                            width: "16px", height: "16px", borderRadius: "4px",
-                            background: active ? "#008080" : "transparent",
-                            border: `1.5px solid ${active ? "#008080" : "#333"}`,
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                          }}>
-                            {active && <span style={{ color: "#fff", fontSize: "10px", fontWeight: "700" }}>✓</span>}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                          }}
+                        >
+                          <span style={{ fontSize: "12px", color: "#33b5b5" }}>
+                            ₹{addon.price.toLocaleString("en-IN")}
+                          </span>
+                          <div
+                            style={{
+                              width: "16px",
+                              height: "16px",
+                              borderRadius: "4px",
+                              background: active ? "#008080" : "transparent",
+                              border: `1.5px solid ${
+                                active ? "#008080" : "#333"
+                              }`,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            {active && (
+                              <span
+                                style={{
+                                  color: "#fff",
+                                  fontSize: "10px",
+                                  fontWeight: "700",
+                                }}
+                              >
+                                ✓
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1680,24 +3734,61 @@ export default function Bookings({ isMobile }) {
 
               {/* Custom add-on */}
               <div>
-                <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.08em", marginBottom: "10px" }}>ADD CUSTOM</p>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#444",
+                    fontWeight: "600",
+                    letterSpacing: "0.08em",
+                    marginBottom: "10px",
+                  }}
+                >
+                  ADD CUSTOM
+                </p>
                 <div style={{ display: "flex", gap: "8px" }}>
                   <input
                     placeholder="Add-on name"
                     value={customLabel}
                     onChange={(e) => setCustomLabel(e.target.value)}
-                    style={{ flex: 2, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "8px 12px", color: "#e0e0e0", fontSize: "13px", outline: "none" }}
+                    style={{
+                      flex: 2,
+                      background: "#1a1a1a",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: "8px",
+                      padding: "8px 12px",
+                      color: "#e0e0e0",
+                      fontSize: "13px",
+                      outline: "none",
+                    }}
                   />
                   <input
                     placeholder="₹ Price"
                     type="number"
                     value={customPrice}
                     onChange={(e) => setCustomPrice(e.target.value)}
-                    style={{ flex: 1, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "8px 12px", color: "#e0e0e0", fontSize: "13px", outline: "none" }}
+                    style={{
+                      flex: 1,
+                      background: "#1a1a1a",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: "8px",
+                      padding: "8px 12px",
+                      color: "#e0e0e0",
+                      fontSize: "13px",
+                      outline: "none",
+                    }}
                   />
                   <button
                     onClick={addCustomAddon}
-                    style={{ padding: "8px 12px", background: "rgba(0,128,128,0.15)", border: "1px solid rgba(0,128,128,0.3)", borderRadius: "8px", color: "#33b5b5", cursor: "pointer", display: "flex", alignItems: "center" }}
+                    style={{
+                      padding: "8px 12px",
+                      background: "rgba(0,128,128,0.15)",
+                      border: "1px solid rgba(0,128,128,0.3)",
+                      borderRadius: "8px",
+                      color: "#33b5b5",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                    }}
                   >
                     <Plus size={15} />
                   </button>
@@ -1707,17 +3798,50 @@ export default function Bookings({ isMobile }) {
               {/* Current selected list */}
               {addonModal.addons.length > 0 && (
                 <div>
-                  <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.08em", marginBottom: "10px" }}>
-                    SELECTED · {addonModal.addons.length} · Est. ₹{addonModal.addons.reduce((s, a) => s + (a.price || 0), 0).toLocaleString("en-IN")}
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#444",
+                      fontWeight: "600",
+                      letterSpacing: "0.08em",
+                      marginBottom: "10px",
+                    }}
+                  >
+                    SELECTED · {addonModal.addons.length} · Est. ₹
+                    {addonModal.addons
+                      .reduce((s, a) => s + (a.price || 0), 0)
+                      .toLocaleString("en-IN")}
                   </p>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  <div
+                    style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}
+                  >
                     {addonModal.addons.map((a) => (
                       <span
                         key={a.id}
-                        style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#33b5b5", background: "rgba(0,128,128,0.1)", border: "1px solid rgba(0,128,128,0.3)", padding: "4px 10px", borderRadius: "20px" }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          fontSize: "12px",
+                          color: "#33b5b5",
+                          background: "rgba(0,128,128,0.1)",
+                          border: "1px solid rgba(0,128,128,0.3)",
+                          padding: "4px 10px",
+                          borderRadius: "20px",
+                        }}
                       >
                         {a.label} · ₹{(a.price || 0).toLocaleString("en-IN")}
-                        <span onClick={() => removeAddon(a.id)} style={{ cursor: "pointer", color: "#555", fontSize: "12px", lineHeight: 1 }}>✕</span>
+                        <span
+                          onClick={() => removeAddon(a.id)}
+                          style={{
+                            cursor: "pointer",
+                            color: "#555",
+                            fontSize: "12px",
+                            lineHeight: 1,
+                          }}
+                        >
+                          ✕
+                        </span>
                       </span>
                     ))}
                   </div>
@@ -1726,9 +3850,44 @@ export default function Bookings({ isMobile }) {
             </div>
 
             {/* Footer */}
-            <div style={{ display: "flex", gap: "10px", padding: "16px 20px", borderTop: "1px solid #1e1e1e" }}>
-              <button onClick={() => setAddonModal(null)} style={{ flex: 1, padding: "10px", background: "transparent", border: "1px solid #2a2a2a", borderRadius: "8px", color: "#555", fontSize: "14px", cursor: "pointer" }}>Cancel</button>
-              <button onClick={saveAddons} disabled={addonSaving} style={{ flex: 1, padding: "10px", background: "rgba(0,128,128,0.2)", border: "1px solid rgba(0,128,128,0.4)", borderRadius: "8px", color: "#33b5b5", fontSize: "14px", fontWeight: "600", cursor: "pointer" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                padding: "16px 20px",
+                borderTop: "1px solid #1e1e1e",
+              }}
+            >
+              <button
+                onClick={() => setAddonModal(null)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  background: "transparent",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "8px",
+                  color: "#555",
+                  fontSize: "14px",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveAddons}
+                disabled={addonSaving}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  background: "rgba(0,128,128,0.2)",
+                  border: "1px solid rgba(0,128,128,0.4)",
+                  borderRadius: "8px",
+                  color: "#33b5b5",
+                  fontSize: "14px",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                }}
+              >
                 {addonSaving ? "Saving..." : "Save Add-ons"}
               </button>
             </div>
@@ -1791,21 +3950,61 @@ export default function Bookings({ isMobile }) {
                 <X size={18} />
               </button>
             </div>
-            <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "20px" }}>
+            <div
+              style={{
+                padding: "20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "20px",
+              }}
+            >
               {/* Hidden file inputs */}
-              <input ref={frontInputRef} type="file" accept="image/*,.pdf" style={{ display: "none" }}
-                onChange={(e) => { if (e.target.files[0]) handleDocReplace("front", e.target.files[0]); e.target.value = ""; }} />
-              <input ref={backInputRef} type="file" accept="image/*,.pdf" style={{ display: "none" }}
-                onChange={(e) => { if (e.target.files[0]) handleDocReplace("back", e.target.files[0]); e.target.value = ""; }} />
+              <input
+                ref={frontInputRef}
+                type="file"
+                accept="image/*,.pdf"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.target.files[0])
+                    handleDocReplace("front", e.target.files[0]);
+                  e.target.value = "";
+                }}
+              />
+              <input
+                ref={backInputRef}
+                type="file"
+                accept="image/*,.pdf"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.target.files[0])
+                    handleDocReplace("back", e.target.files[0]);
+                  e.target.value = "";
+                }}
+              />
 
               {["front", "back"].map((side) => {
                 const url = docsModal[side];
                 const op = docOps[side];
-                const inputRef = side === "front" ? frontInputRef : backInputRef;
+                const inputRef =
+                  side === "front" ? frontInputRef : backInputRef;
                 return (
                   <div key={side}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
-                      <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", letterSpacing: "0.06em" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          fontWeight: "600",
+                          letterSpacing: "0.06em",
+                        }}
+                      >
                         {side === "front" ? "FRONT SIDE" : "BACK SIDE"}
                       </p>
                       <div style={{ display: "flex", gap: "6px" }}>
@@ -1813,7 +4012,20 @@ export default function Bookings({ isMobile }) {
                           onClick={() => inputRef.current?.click()}
                           disabled={!!op}
                           title="Replace"
-                          style={{ display: "flex", alignItems: "center", gap: "4px", padding: "4px 10px", background: "rgba(0,128,128,0.1)", border: "1px solid rgba(0,128,128,0.3)", borderRadius: "6px", color: "#33b5b5", fontSize: "11px", fontWeight: "600", cursor: "pointer", opacity: op ? 0.5 : 1 }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            padding: "4px 10px",
+                            background: "rgba(0,128,128,0.1)",
+                            border: "1px solid rgba(0,128,128,0.3)",
+                            borderRadius: "6px",
+                            color: "#33b5b5",
+                            fontSize: "11px",
+                            fontWeight: "600",
+                            cursor: "pointer",
+                            opacity: op ? 0.5 : 1,
+                          }}
                         >
                           <RefreshCw size={11} />
                           {op === "uploading" ? "Uploading..." : "Replace"}
@@ -1822,7 +4034,20 @@ export default function Bookings({ isMobile }) {
                           onClick={() => handleDocDelete(side)}
                           disabled={!!op || !url}
                           title="Delete"
-                          style={{ display: "flex", alignItems: "center", gap: "4px", padding: "4px 10px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "6px", color: "#ef4444", fontSize: "11px", fontWeight: "600", cursor: "pointer", opacity: (op || !url) ? 0.4 : 1 }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            padding: "4px 10px",
+                            background: "rgba(239,68,68,0.08)",
+                            border: "1px solid rgba(239,68,68,0.25)",
+                            borderRadius: "6px",
+                            color: "#ef4444",
+                            fontSize: "11px",
+                            fontWeight: "600",
+                            cursor: "pointer",
+                            opacity: op || !url ? 0.4 : 1,
+                          }}
                         >
                           <Trash2 size={11} />
                           {op === "deleting" ? "Deleting..." : "Delete"}
@@ -1834,15 +4059,44 @@ export default function Bookings({ isMobile }) {
                         <img
                           src={url}
                           alt={`Aadhaar ${side}`}
-                          style={{ width: "100%", borderRadius: "8px", border: "1px solid #2a2a2a", objectFit: "contain", maxHeight: "200px", background: "#1a1a1a" }}
-                          onError={(e) => { e.target.style.display = "none"; }}
+                          style={{
+                            width: "100%",
+                            borderRadius: "8px",
+                            border: "1px solid #2a2a2a",
+                            objectFit: "contain",
+                            maxHeight: "200px",
+                            background: "#1a1a1a",
+                          }}
+                          onError={(e) => {
+                            e.target.style.display = "none";
+                          }}
                         />
-                        <a href={url} target="_blank" rel="noreferrer" style={{ display: "block", fontSize: "12px", color: "#33b5b5", marginTop: "6px" }}>
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            display: "block",
+                            fontSize: "12px",
+                            color: "#33b5b5",
+                            marginTop: "6px",
+                          }}
+                        >
                           Open full image ↗
                         </a>
                       </>
                     ) : (
-                      <div style={{ background: "#1a1a1a", border: "1px dashed #2a2a2a", borderRadius: "8px", padding: "32px", textAlign: "center", color: "#444", fontSize: "13px" }}>
+                      <div
+                        style={{
+                          background: "#1a1a1a",
+                          border: "1px dashed #2a2a2a",
+                          borderRadius: "8px",
+                          padding: "32px",
+                          textAlign: "center",
+                          color: "#444",
+                          fontSize: "13px",
+                        }}
+                      >
                         No image — deleted or not uploaded
                       </div>
                     )}
@@ -1880,7 +4134,18 @@ export default function Bookings({ isMobile }) {
             }}
           >
             <div style={{ marginBottom: "14px" }}>
-              <span style={{ width: "14px", height: "14px", borderRadius: "50%", background: statusConfirm.status === "checked-in" ? "#10b981" : "#ef4444", display: "inline-block" }} />
+              <span
+                style={{
+                  width: "14px",
+                  height: "14px",
+                  borderRadius: "50%",
+                  background:
+                    statusConfirm.status === "checked-in"
+                      ? "#10b981"
+                      : "#ef4444",
+                  display: "inline-block",
+                }}
+              />
             </div>
             <p
               style={{

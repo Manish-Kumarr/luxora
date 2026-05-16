@@ -237,6 +237,9 @@ export default function GuestForm() {
       setError("Please fill all required fields.");
       return;
     }
+    if (form.phone.replace(/\D/g, "").length !== 10) {
+      return;
+    }
     if (Number(form.guests_count) > 3) {
       setError("Maximum 3 guests allowed.");
       return;
@@ -481,6 +484,9 @@ export default function GuestForm() {
                   }}
                   onBlur={(e) => checkFirstTime(e.target.value)}
                 />
+                {form.phone && form.phone.replace(/\D/g, "").length > 0 && form.phone.replace(/\D/g, "").length !== 10 && (
+                  <p style={{ fontSize: "11px", color: "#ef4444", marginTop: "4px" }}>Phone number must be 10 digits.</p>
+                )}
                 {checkingPhone && (
                   <p
                     style={{

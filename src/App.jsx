@@ -6,12 +6,14 @@ import Dashboard from "./pages/Dashboard";
 import Expenses from "./pages/Expenses";
 import Analytics from "./pages/Analytics";
 import Settlement from "./pages/Settlement";
-import Todo from "./pages/Todo";
 import Bookings from "./pages/Bookings";
+import TodoFloat from "./components/TodoFloat";
 import GuestPromos from "./pages/GuestPromos";
+import Owners from "./pages/Owners";
 import GuestForm from "./pages/GuestForm";
 import UploadDocs from "./pages/UploadDocs";
 import LandingPage from "./pages/LandingPage";
+import Payouts from "./pages/Payouts";
 import { Menu } from "lucide-react";
 import { useWindowWidth } from "./hooks/useWindowWidth";
 
@@ -20,9 +22,10 @@ const PAGE_TITLES = {
   expenses: "Expenses",
   analytics: "Analytics",
   settlement: "Settlement",
-  todo: "Todo",
-  bookings: "Guest Bookings",
-  guestpromos: "Guest Promos",
+  bookings: "Bookings",
+  guestpromos: "Promos",
+  owners: "Owners",
+  payouts: "Payouts",
 };
 
 function AppInner() {
@@ -32,11 +35,20 @@ function AppInner() {
   const width = useWindowWidth();
   const isMobile = width < 768;
 
-  if (authLoading) return (
-    <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ color: "#555", fontSize: "14px" }}>Loading...</div>
-    </div>
-  );
+  if (authLoading)
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0a0a0a",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ color: "#555", fontSize: "14px" }}>Loading...</div>
+      </div>
+    );
 
   if (!isLoggedIn) {
     if (window.location.pathname !== "/login") {
@@ -55,9 +67,10 @@ function AppInner() {
     expenses: <Expenses isMobile={isMobile} />,
     analytics: <Analytics isMobile={isMobile} />,
     settlement: <Settlement isMobile={isMobile} />,
-    todo: <Todo isMobile={isMobile} />,
     bookings: <Bookings isMobile={isMobile} />,
     guestpromos: <GuestPromos isMobile={isMobile} />,
+    owners: <Owners isMobile={isMobile} />,
+    payouts: <Payouts isMobile={isMobile} />,
   };
 
   const handleNavChange = (page) => {
@@ -66,7 +79,14 @@ function AppInner() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#0a0a0a", overflow: "hidden" }}>
+    <div
+      style={{
+        display: "flex",
+        height: "100vh",
+        background: "#0a0a0a",
+        overflow: "hidden",
+      }}
+    >
       {/* Sidebar */}
       <Sidebar
         active={activePage}
@@ -80,7 +100,8 @@ function AppInner() {
         <div
           onClick={() => setSidebarOpen(false)}
           style={{
-            position: "fixed", inset: 0,
+            position: "fixed",
+            inset: 0,
             background: "rgba(0,0,0,0.65)",
             zIndex: 150,
           }}
@@ -88,30 +109,54 @@ function AppInner() {
       )}
 
       {/* Main content */}
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+        }}
+      >
         {/* Mobile top bar */}
         {isMobile && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: "12px",
-            padding: "12px 16px", background: "#111",
-            borderBottom: "1px solid #1e1e1e", flexShrink: 0,
-          }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+              padding: "12px 16px",
+              background: "#111",
+              borderBottom: "1px solid #1e1e1e",
+              flexShrink: 0,
+            }}
+          >
             <button
               onClick={() => setSidebarOpen(true)}
-              style={{ background: "none", border: "none", color: "#e0e0e0", cursor: "pointer", display: "flex", alignItems: "center", padding: "4px" }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#e0e0e0",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                padding: "4px",
+              }}
             >
               <Menu size={22} />
             </button>
-            <span style={{ fontSize: "16px", fontWeight: "700", color: "#f0f0f0" }}>
+            <span
+              style={{ fontSize: "16px", fontWeight: "700", color: "#f0f0f0" }}
+            >
               {PAGE_TITLES[activePage]}
             </span>
           </div>
         )}
 
-        <main style={{ flex: 1, overflowY: "auto" }}>
-          {pages[activePage]}
-        </main>
+        <main style={{ flex: 1, overflowY: "auto" }}>{pages[activePage]}</main>
       </div>
+
+      <TodoFloat />
     </div>
   );
 }

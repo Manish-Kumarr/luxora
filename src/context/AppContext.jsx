@@ -16,23 +16,23 @@ export function AppProvider({ children }) {
   const [roomRates, setRoomRates] = useState({ weekday_rate: 1699, weekend_rate: 1899 });
   const [promoCodes, setPromoCodes] = useState([]);
   const [phonePromos, setPhonePromos] = useState([]);
+  const [owners, setOwners] = useState([]);
+  const [ownersLoading, setOwnersLoading] = useState(false);
 
-  // Check existing session on mount
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setAuthLoading(false);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
     if (user) {
+      fetchOwners();
       fetchExpenses();
       fetchTodos();
       fetchBookings();
@@ -45,9 +45,49 @@ export function AppProvider({ children }) {
       setTodos([]);
       setBookings([]);
       setPayments([]);
+      setOwners([]);
     }
   }, [user]);
 
+  // ── Owners ──────────────────────────────────────────
+  const fetchOwners = async () => {
+    setOwnersLoading(true);
+    const { data, error } = await supabase
+      .from("owners")
+      .select("*")
+      .order("display_order", { ascending: true });
+    if (!error && data) setOwners(data);
+    setOwnersLoading(false);
+  };
+
+  const addOwner = async (ownerData) => {
+    const { data, error } = await supabase
+      .from("owners")
+      .insert([ownerData])
+      .select()
+      .single();
+    if (!error && data) setOwners((prev) => [...prev, data].sort((a, b) => a.display_order - b.display_order));
+    return { data, error };
+  };
+
+  const updateOwner = async (id, ownerData) => {
+    const { data, error } = await supabase
+      .from("owners")
+      .update(ownerData)
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setOwners((prev) => prev.map((o) => (o.id === id ? data : o)));
+    return { data, error };
+  };
+
+  const deleteOwner = async (id) => {
+    const { error } = await supabase.from("owners").delete().eq("id", id);
+    if (!error) setOwners((prev) => prev.filter((o) => o.id !== id));
+    return { error };
+  };
+
+  // ── Expenses ─────────────────────────────────────────
   const fetchExpenses = async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -58,6 +98,34 @@ export function AppProvider({ children }) {
     setLoading(false);
   };
 
+  const addExpense = async (expense) => {
+    const { data, error } = await supabase
+      .from("expenses")
+      .insert([mapToDB(expense)])
+      .select()
+      .single();
+    if (!error && data) setExpenses((prev) => [mapFromDB(data), ...prev]);
+    return { error };
+  };
+
+  const updateExpense = async (id, updated) => {
+    const { data, error } = await supabase
+      .from("expenses")
+      .update(mapToDB(updated))
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setExpenses((prev) => prev.map((e) => (e.id === id ? mapFromDB(data) : e)));
+    return { error };
+  };
+
+  const deleteExpense = async (id) => {
+    const { error } = await supabase.from("expenses").delete().eq("id", id);
+    if (!error) setExpenses((prev) => prev.filter((e) => e.id !== id));
+    return { error };
+  };
+
+  // ── Todos ────────────────────────────────────────────
   const fetchTodos = async () => {
     setTodosLoading(true);
     const { data, error } = await supabase
@@ -106,18 +174,72 @@ export function AppProvider({ children }) {
     return { error };
   };
 
+  // ── Bookings ─────────────────────────────────────────
   const fetchBookings = async () => {
     setBookingsLoading(true);
     const { data, error } = await supabase
       .from("guest_bookings")
       .select("*")
       .order("created_at", { ascending: false });
-    console.log("fetchBookings →", { data, error });
     if (error) console.error("fetchBookings error:", error);
     if (data) setBookings(data);
     setBookingsLoading(false);
   };
 
+  const addBooking = async (fields) => {
+    const { data, error } = await supabase
+      .from("guest_bookings")
+      .insert([{ ...fields, status: fields.status || "confirmed" }])
+      .select()
+      .single();
+    if (!error && data) setBookings((prev) => [data, ...prev]);
+    return { data, error };
+  };
+
+  const updateBooking = async (id, fields) => {
+    const { data, error } = await supabase
+      .from("guest_bookings")
+      .update(fields)
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setBookings((prev) => prev.map((b) => (b.id === id ? data : b)));
+    return { error };
+  };
+
+  const deleteBooking = async (id) => {
+    const { error } = await supabase.from("guest_bookings").delete().eq("id", id);
+    if (!error) setBookings((prev) => prev.filter((b) => b.id !== id));
+    return { error };
+  };
+
+  const markBrokerCommissionPaid = async (id, paid) => {
+    return updateBooking(id, {
+      broker_commission_paid: paid,
+      broker_commission_paid_at: paid ? new Date().toISOString() : null,
+    });
+  };
+
+  const updateBookingStatus = async (id, status) => {
+    const update = { status };
+    if (status === "checked-in") update.checked_in_at = new Date().toISOString();
+    if (status === "checked-out") update.checked_out_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("guest_bookings")
+      .update(update)
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setBookings((prev) => prev.map((b) => (b.id === id ? data : b)));
+    return { error };
+  };
+
+  const getDocUrls = (bookingId) => {
+    const base = (name) => supabase.storage.from("documents").getPublicUrl(`${bookingId}/${name}`).data.publicUrl;
+    return { front: base("aadhaar_front"), back: base("aadhaar_back") };
+  };
+
+  // ── Payments ─────────────────────────────────────────
   const fetchPayments = async () => {
     const { data, error } = await supabase
       .from("payments")
@@ -142,6 +264,7 @@ export function AppProvider({ children }) {
     return { error };
   };
 
+  // ── Room Rates ───────────────────────────────────────
   const fetchRoomRates = async () => {
     const { data, error } = await supabase.from("room_rates").select("*").eq("id", 1).single();
     if (!error && data) setRoomRates(data);
@@ -158,6 +281,7 @@ export function AppProvider({ children }) {
     return { error };
   };
 
+  // ── Promo Codes ──────────────────────────────────────
   const fetchPromoCodes = async () => {
     const { data } = await supabase.from("promo_codes").select("*").order("discount_percent");
     if (data) setPromoCodes(data);
@@ -178,7 +302,7 @@ export function AppProvider({ children }) {
       .update({ discount_percent: Number(discount_percent) })
       .eq("code", code)
       .select().single();
-    if (!error && data) setPromoCodes((prev) => prev.map((p) => p.code === code ? data : p));
+    if (!error && data) setPromoCodes((prev) => prev.map((p) => (p.code === code ? data : p)));
     return { error };
   };
 
@@ -188,7 +312,7 @@ export function AppProvider({ children }) {
       .update({ active })
       .eq("code", code)
       .select().single();
-    if (!error && data) setPromoCodes((prev) => prev.map((p) => p.code === code ? data : p));
+    if (!error && data) setPromoCodes((prev) => prev.map((p) => (p.code === code ? data : p)));
     return { error };
   };
 
@@ -198,6 +322,7 @@ export function AppProvider({ children }) {
     return { error };
   };
 
+  // ── Phone Promos ─────────────────────────────────────
   const fetchPhonePromos = async () => {
     const { data } = await supabase.from("phone_promos").select("*").order("created_at", { ascending: false });
     if (data) setPhonePromos(data);
@@ -208,10 +333,12 @@ export function AppProvider({ children }) {
       .from("phone_promos")
       .upsert([{ phone, promo_code: promoCode, claimed: false }], { onConflict: "phone" })
       .select().single();
-    if (!error && data) setPhonePromos((prev) => {
-      const exists = prev.find((p) => p.phone === phone);
-      return exists ? prev.map((p) => p.phone === phone ? data : p) : [data, ...prev];
-    });
+    if (!error && data) {
+      setPhonePromos((prev) => {
+        const exists = prev.find((p) => p.phone === phone);
+        return exists ? prev.map((p) => (p.phone === phone ? data : p)) : [data, ...prev];
+      });
+    }
     return { error };
   };
 
@@ -229,43 +356,7 @@ export function AppProvider({ children }) {
     return updateBooking(bookingId, updates);
   };
 
-  const getDocUrls = (bookingId) => {
-    const base = (name) => supabase.storage.from("documents").getPublicUrl(`${bookingId}/${name}`).data.publicUrl;
-    return { front: base("aadhaar_front"), back: base("aadhaar_back") };
-  };
-
-  const updateBooking = async (id, fields) => {
-    const { data, error } = await supabase
-      .from("guest_bookings")
-      .update(fields)
-      .eq("id", id)
-      .select()
-      .single();
-    if (!error && data) setBookings((prev) => prev.map((b) => (b.id === id ? data : b)));
-    return { error };
-  };
-
-  const deleteBooking = async (id) => {
-    const { error } = await supabase.from("guest_bookings").delete().eq("id", id);
-    if (!error) setBookings((prev) => prev.filter((b) => b.id !== id));
-    return { error };
-  };
-
-  const updateBookingStatus = async (id, status) => {
-    const update = { status };
-    if (status === "checked-in") update.checked_in_at = new Date().toISOString();
-    if (status === "checked-out") update.checked_out_at = new Date().toISOString();
-
-    const { data, error } = await supabase
-      .from("guest_bookings")
-      .update(update)
-      .eq("id", id)
-      .select()
-      .single();
-    if (!error && data) setBookings((prev) => prev.map((b) => (b.id === id ? data : b)));
-    return { error };
-  };
-
+  // ── Auth ─────────────────────────────────────────────
   const login = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
@@ -275,33 +366,7 @@ export function AppProvider({ children }) {
   const logout = async () => {
     await supabase.auth.signOut();
     setExpenses([]);
-  };
-
-  const addExpense = async (expense) => {
-    const { data, error } = await supabase
-      .from("expenses")
-      .insert([mapToDB(expense)])
-      .select()
-      .single();
-    if (!error && data) setExpenses((prev) => [mapFromDB(data), ...prev]);
-    return { error };
-  };
-
-  const updateExpense = async (id, updated) => {
-    const { data, error } = await supabase
-      .from("expenses")
-      .update(mapToDB(updated))
-      .eq("id", id)
-      .select()
-      .single();
-    if (!error && data) setExpenses((prev) => prev.map((e) => (e.id === id ? mapFromDB(data) : e)));
-    return { error };
-  };
-
-  const deleteExpense = async (id) => {
-    const { error } = await supabase.from("expenses").delete().eq("id", id);
-    if (!error) setExpenses((prev) => prev.filter((e) => e.id !== id));
-    return { error };
+    setOwners([]);
   };
 
   return (
@@ -312,34 +377,49 @@ export function AppProvider({ children }) {
         authLoading,
         login,
         logout,
+        // owners
+        owners,
+        ownersLoading,
+        addOwner,
+        updateOwner,
+        deleteOwner,
+        // expenses
         expenses,
         loading,
         addExpense,
         updateExpense,
         deleteExpense,
+        // todos
         todos,
         todosLoading,
         addTodo,
         toggleTodo,
         updateTodo,
         deleteTodo,
+        // bookings
         bookings,
         bookingsLoading,
+        addBooking,
         updateBookingStatus,
         updateBooking,
         deleteBooking,
+        markBrokerCommissionPaid,
         getDocUrls,
+        // payments
         payments,
         addPayment,
         deletePayment,
+        // room rates
         roomRates,
         updateRoomRates,
+        // promo codes
         promoCodes,
         addPromoCode,
         updatePromoCode,
         togglePromoCode,
         deletePromoCode,
         applyPromoToBooking,
+        // phone promos
         phonePromos,
         assignPhonePromo,
         removePhonePromo,
@@ -359,9 +439,7 @@ function mapFromDB(row) {
     category: row.category,
     description: row.description,
     totalAmount: row.total_amount,
-    nikhilPaid: row.nikhil_paid,
-    manishPaid: row.manish_paid,
-    keshawPaid: row.keshaw_paid,
+    paid_amounts: row.paid_amounts || {},
     status: row.status,
     notes: row.notes,
   };
@@ -373,9 +451,7 @@ function mapToDB(exp) {
     category: exp.category,
     description: exp.description,
     total_amount: Number(exp.totalAmount) || 0,
-    nikhil_paid: Number(exp.nikhilPaid) || 0,
-    manish_paid: Number(exp.manishPaid) || 0,
-    keshaw_paid: Number(exp.keshawPaid) || 0,
+    paid_amounts: exp.paid_amounts || {},
     status: exp.status,
     notes: exp.notes || "",
   };
