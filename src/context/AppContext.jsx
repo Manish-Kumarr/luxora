@@ -18,6 +18,8 @@ export function AppProvider({ children }) {
   const [phonePromos, setPhonePromos] = useState([]);
   const [owners, setOwners] = useState([]);
   const [ownersLoading, setOwnersLoading] = useState(false);
+  const [memberTransfers, setMemberTransfers] = useState([]);
+  const [ownerPayouts, setOwnerPayouts] = useState([]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -40,12 +42,16 @@ export function AppProvider({ children }) {
       fetchRoomRates();
       fetchPromoCodes();
       fetchPhonePromos();
+      fetchMemberTransfers();
+      fetchOwnerPayouts();
     } else {
       setExpenses([]);
       setTodos([]);
       setBookings([]);
       setPayments([]);
       setOwners([]);
+      setMemberTransfers([]);
+      setOwnerPayouts([]);
     }
   }, [user]);
 
@@ -356,6 +362,73 @@ export function AppProvider({ children }) {
     return updateBooking(bookingId, updates);
   };
 
+  // ── Member Transfers ─────────────────────────────────
+  const fetchMemberTransfers = async () => {
+    const { data, error } = await supabase
+      .from("member_transfers")
+      .select("*")
+      .order("date", { ascending: false });
+    if (!error && data) setMemberTransfers(data);
+  };
+
+  const addMemberTransfer = async (transfer) => {
+    const { data, error } = await supabase
+      .from("member_transfers")
+      .insert([transfer])
+      .select()
+      .single();
+    if (!error && data) setMemberTransfers((prev) => [data, ...prev]);
+    return { data, error };
+  };
+
+  const updateMemberTransfer = async (id, transfer) => {
+    const { data, error } = await supabase
+      .from("member_transfers")
+      .update(transfer)
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) setMemberTransfers((prev) => prev.map((t) => (t.id === id ? data : t)));
+    return { data, error };
+  };
+
+  const deleteMemberTransfer = async (id) => {
+    const { error } = await supabase.from("member_transfers").delete().eq("id", id);
+    if (!error) setMemberTransfers((prev) => prev.filter((t) => t.id !== id));
+    return { error };
+  };
+
+  // ── Owner Payouts ────────────────────────────────────
+  const fetchOwnerPayouts = async () => {
+    const { data, error } = await supabase
+      .from("owner_payouts")
+      .select("*")
+      .order("date", { ascending: false });
+    if (!error && data) setOwnerPayouts(data);
+  };
+
+  const addOwnerPayout = async (payout) => {
+    const { data, error } = await supabase
+      .from("owner_payouts")
+      .insert([payout])
+      .select()
+      .single();
+    if (!error && data) setOwnerPayouts((prev) => [data, ...prev]);
+    return { data, error };
+  };
+
+  const updateOwnerPayout = async (id, updates) => {
+    const { data, error } = await supabase.from("owner_payouts").update(updates).eq("id", id).select().single();
+    if (!error && data) setOwnerPayouts((prev) => prev.map((p) => (p.id === id ? data : p)));
+    return { error };
+  };
+
+  const deleteOwnerPayout = async (id) => {
+    const { error } = await supabase.from("owner_payouts").delete().eq("id", id);
+    if (!error) setOwnerPayouts((prev) => prev.filter((p) => p.id !== id));
+    return { error };
+  };
+
   // ── Auth ─────────────────────────────────────────────
   const login = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -423,6 +496,16 @@ export function AppProvider({ children }) {
         phonePromos,
         assignPhonePromo,
         removePhonePromo,
+        // member transfers
+        memberTransfers,
+        addMemberTransfer,
+        updateMemberTransfer,
+        deleteMemberTransfer,
+        // owner payouts
+        ownerPayouts,
+        addOwnerPayout,
+        updateOwnerPayout,
+        deleteOwnerPayout,
       }}
     >
       {children}
@@ -442,6 +525,9 @@ function mapFromDB(row) {
     paid_amounts: row.paid_amounts || {},
     status: row.status,
     notes: row.notes,
+    room: row.room || "",
+    issue_priority: row.issue_priority || "medium",
+    maintenance_status: row.maintenance_status || "open",
   };
 }
 
@@ -454,5 +540,8 @@ function mapToDB(exp) {
     paid_amounts: exp.paid_amounts || {},
     status: exp.status,
     notes: exp.notes || "",
+    room: exp.room || null,
+    issue_priority: exp.issue_priority || null,
+    maintenance_status: exp.maintenance_status || null,
   };
 }

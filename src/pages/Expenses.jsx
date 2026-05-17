@@ -3,7 +3,20 @@ import { useApp } from "../context/AppContext";
 import { CATEGORIES } from "../data/initialData";
 import { Plus, Pencil, Trash2, X, Check, ChevronDown } from "lucide-react";
 
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 const formatDate = (dateStr) => {
   const [y, m, d] = dateStr.split("-");
@@ -27,18 +40,27 @@ const getEmpty = (owners) => ({
 });
 
 export default function Expenses({ isMobile }) {
-  const { expenses, addExpense, updateExpense, deleteExpense, loading, owners } = useApp();
+  const {
+    expenses,
+    addExpense,
+    updateExpense,
+    deleteExpense,
+    loading,
+    owners,
+  } = useApp();
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [sortBy, setSortBy] = useState("date-desc");
   const [dateFilter, setDateFilter] = useState("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
 
-  const fmt = (n) => n ? "₹" + Number(n).toLocaleString("en-IN") : "—";
+  const fmt = (n) => (n ? "₹" + Number(n).toLocaleString("en-IN") : "—");
 
   const dateRange = useMemo(() => {
     const now = new Date();
@@ -59,17 +81,71 @@ export default function Expenses({ isMobile }) {
     return { from: null, to: null };
   }, [dateFilter, customFrom, customTo]);
 
-  const filtered = expenses.filter((e) => {
-    const matchSearch =
-      e.description.toLowerCase().includes(search.toLowerCase()) ||
-      e.category.toLowerCase().includes(search.toLowerCase());
-    const matchCat = filterCat === "All" || e.category === filterCat;
-    const d = e.date?.slice(0, 10);
-    const matchDate =
-      (!dateRange.from || d >= dateRange.from) &&
-      (!dateRange.to || d <= dateRange.to);
-    return matchSearch && matchCat && matchDate;
-  });
+  const nonMaintenanceExpenses = expenses.filter(
+    (e) => e.category !== "Maintenance"
+  );
+
+  const filtered = nonMaintenanceExpenses
+    .filter((e) => {
+      const matchSearch =
+        e.description.toLowerCase().includes(search.toLowerCase()) ||
+        e.category.toLowerCase().includes(search.toLowerCase());
+      const matchCat = filterCat === "All" || e.category === filterCat;
+      const matchStatus = filterStatus === "All" || e.status === filterStatus;
+      const d = e.date?.slice(0, 10);
+      const matchDate =
+        (!dateRange.from || d >= dateRange.from) &&
+        (!dateRange.to || d <= dateRange.to);
+      return matchSearch && matchCat && matchStatus && matchDate;
+    })
+    .sort((a, b) => {
+      if (sortBy === "date-desc")
+        return (b.date || "").localeCompare(a.date || "");
+      if (sortBy === "date-asc")
+        return (a.date || "").localeCompare(b.date || "");
+      if (sortBy === "amount-desc")
+        return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
+      if (sortBy === "amount-asc")
+        return (Number(a.totalAmount) || 0) - (Number(b.totalAmount) || 0);
+      return 0;
+    });
+
+  const filteredTotal = filtered.reduce(
+    (s, e) => s + (Number(e.totalAmount) || 0),
+    0
+  );
+
+  // ── Stats ──
+  const totalAll = nonMaintenanceExpenses.reduce(
+    (s, e) => s + (Number(e.totalAmount) || 0),
+    0
+  );
+  const pendingTotal = nonMaintenanceExpenses
+    .filter((e) => e.status === "Pending")
+    .reduce((s, e) => s + (Number(e.totalAmount) || 0), 0);
+  const doneTotal = nonMaintenanceExpenses
+    .filter((e) => e.status === "Done")
+    .reduce((s, e) => s + (Number(e.totalAmount) || 0), 0);
+  const approvalCount = nonMaintenanceExpenses.filter(
+    (e) => e.status === "Needs Approval"
+  ).length;
+
+  // ── Per-owner summary ──
+  const ownerTotals = owners.map((o) => ({
+    ...o,
+    total: filtered.reduce(
+      (s, e) => s + (Number((e.paid_amounts || {})[o.id]) || 0),
+      0
+    ),
+  }));
+
+  // ── Category breakdown ──
+  const catBreakdown = Object.entries(
+    filtered.reduce((acc, e) => {
+      acc[e.category] = (acc[e.category] || 0) + (Number(e.totalAmount) || 0);
+      return acc;
+    }, {})
+  ).sort((a, b) => b[1] - a[1]);
 
   const openAdd = () => {
     setForm(getEmpty(owners));
@@ -94,9 +170,16 @@ export default function Expenses({ isMobile }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const paid_amounts = Object.fromEntries(
-      Object.entries(form.paid_amounts || {}).map(([k, v]) => [k, Number(v) || 0])
+      Object.entries(form.paid_amounts || {}).map(([k, v]) => [
+        k,
+        Number(v) || 0,
+      ])
     );
-    const data = { ...form, totalAmount: Number(form.totalAmount), paid_amounts };
+    const data = {
+      ...form,
+      totalAmount: Number(form.totalAmount),
+      paid_amounts,
+    };
     if (editId) await updateExpense(editId, data);
     else await addExpense(data);
     setShowForm(false);
@@ -111,32 +194,129 @@ export default function Expenses({ isMobile }) {
   const colSpan = 4 + owners.length + 2;
 
   return (
-    <div style={{ padding: pad, display: "flex", flexDirection: "column", gap: isMobile ? "14px" : "20px" }}>
-
+    <div
+      style={{
+        padding: pad,
+        display: "flex",
+        flexDirection: "column",
+        gap: isMobile ? "14px" : "20px",
+      }}
+    >
       {/* Header */}
-      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "flex-start" : "center", justifyContent: "space-between", gap: "12px" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "flex-start" : "center",
+          justifyContent: "space-between",
+          gap: "12px",
+        }}
+      >
         <div>
-          <h1 style={{ fontSize: isMobile ? "20px" : "26px", fontWeight: "700", color: "#f0f0f0" }}>Expenses</h1>
-          <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>{expenses.length} total entries</p>
+          <h1
+            style={{
+              fontSize: isMobile ? "20px" : "26px",
+              fontWeight: "700",
+              color: "#f0f0f0",
+            }}
+          >
+            Expenses
+          </h1>
+          <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>
+            {nonMaintenanceExpenses.length} total entries
+          </p>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            flexWrap: "wrap",
+          }}
+        >
           {/* Search */}
           <input
             placeholder="Search expenses..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "8px 14px", color: "#e0e0e0", fontSize: "13px", outline: "none", width: isMobile ? "100%" : "180px", boxSizing: "border-box" }}
+            style={{
+              background: "#1a1a1a",
+              border: "1px solid #2a2a2a",
+              borderRadius: "8px",
+              padding: "8px 14px",
+              color: "#e0e0e0",
+              fontSize: "13px",
+              outline: "none",
+              width: isMobile ? "100%" : "180px",
+              boxSizing: "border-box",
+            }}
           />
 
           {/* Category */}
           <select
             value={filterCat}
             onChange={(e) => setFilterCat(e.target.value)}
-            style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "8px 12px", color: filterCat === "All" ? "#555" : "#e0e0e0", fontSize: "13px", outline: "none", cursor: "pointer", colorScheme: "dark" }}
+            style={{
+              background: "#1a1a1a",
+              border: "1px solid #2a2a2a",
+              borderRadius: "8px",
+              padding: "8px 12px",
+              color: filterCat === "All" ? "#555" : "#e0e0e0",
+              fontSize: "13px",
+              outline: "none",
+              cursor: "pointer",
+              colorScheme: "dark",
+            }}
           >
             <option value="All">All Categories</option>
-            {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+            {CATEGORIES.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+
+          {/* Status filter */}
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            style={{
+              background: "#1a1a1a",
+              border: "1px solid #2a2a2a",
+              borderRadius: "8px",
+              padding: "8px 12px",
+              color: filterStatus === "All" ? "#555" : "#e0e0e0",
+              fontSize: "13px",
+              outline: "none",
+              cursor: "pointer",
+              colorScheme: "dark",
+            }}
+          >
+            <option value="All">All Status</option>
+            <option value="Done">Done</option>
+            <option value="Pending">Pending</option>
+            <option value="Needs Approval">Needs Approval</option>
+          </select>
+
+          {/* Sort */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            style={{
+              background: "#1a1a1a",
+              border: "1px solid #2a2a2a",
+              borderRadius: "8px",
+              padding: "8px 12px",
+              color: "#555",
+              fontSize: "13px",
+              outline: "none",
+              cursor: "pointer",
+              colorScheme: "dark",
+            }}
+          >
+            <option value="date-desc">Newest First</option>
+            <option value="date-asc">Oldest First</option>
+            <option value="amount-desc">Highest Amount</option>
+            <option value="amount-asc">Lowest Amount</option>
           </select>
 
           {/* Date filter dropdown */}
@@ -145,10 +325,17 @@ export default function Expenses({ isMobile }) {
               value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value)}
               style={{
-                appearance: "none", WebkitAppearance: "none",
-                background: "#111", border: "1px solid #2a2a2a", borderRadius: "8px",
-                padding: "8px 32px 8px 12px", color: dateFilter === "all" ? "#555" : "#33b5b5",
-                fontSize: "13px", fontWeight: "600", cursor: "pointer", outline: "none",
+                appearance: "none",
+                WebkitAppearance: "none",
+                background: "#111",
+                border: "1px solid #2a2a2a",
+                borderRadius: "8px",
+                padding: "8px 32px 8px 12px",
+                color: dateFilter === "all" ? "#555" : "#33b5b5",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                outline: "none",
                 colorScheme: "dark",
               }}
             >
@@ -158,28 +345,102 @@ export default function Expenses({ isMobile }) {
               <option value="this_month">This Month</option>
               <option value="custom">Custom Range</option>
             </select>
-            <ChevronDown size={13} color="#555" style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <ChevronDown
+              size={13}
+              color="#555"
+              style={{
+                position: "absolute",
+                right: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+              }}
+            />
           </div>
 
           {dateFilter === "custom" && (
             <>
-              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
-                style={{ background: "#111", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "7px 10px", color: customFrom ? "#e0e0e0" : "#555", fontSize: "12px", outline: "none", colorScheme: "dark" }} />
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                style={{
+                  background: "#111",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "8px",
+                  padding: "7px 10px",
+                  color: customFrom ? "#e0e0e0" : "#555",
+                  fontSize: "12px",
+                  outline: "none",
+                  colorScheme: "dark",
+                }}
+              />
               <span style={{ color: "#444", fontSize: "12px" }}>to</span>
-              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
-                style={{ background: "#111", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "7px 10px", color: customTo ? "#e0e0e0" : "#555", fontSize: "12px", outline: "none", colorScheme: "dark" }} />
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                style={{
+                  background: "#111",
+                  border: "1px solid #2a2a2a",
+                  borderRadius: "8px",
+                  padding: "7px 10px",
+                  color: customTo ? "#e0e0e0" : "#555",
+                  fontSize: "12px",
+                  outline: "none",
+                  colorScheme: "dark",
+                }}
+              />
               {(customFrom || customTo) && (
-                <button onClick={() => { setCustomFrom(""); setCustomTo(""); }} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: "16px", padding: "0 2px" }}>×</button>
+                <button
+                  onClick={() => {
+                    setCustomFrom("");
+                    setCustomTo("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#555",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    padding: "0 2px",
+                  }}
+                >
+                  ×
+                </button>
               )}
             </>
           )}
 
           {dateFilter !== "all" && (
             <button
-              onClick={() => { setDateFilter("all"); setCustomFrom(""); setCustomTo(""); }}
-              style={{ display: "flex", alignItems: "center", gap: "4px", background: "rgba(51,181,181,0.1)", border: "1px solid rgba(51,181,181,0.3)", borderRadius: "6px", padding: "5px 10px", color: "#33b5b5", fontSize: "11px", fontWeight: "600", cursor: "pointer" }}
+              onClick={() => {
+                setDateFilter("all");
+                setCustomFrom("");
+                setCustomTo("");
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                background: "rgba(51,181,181,0.1)",
+                border: "1px solid rgba(51,181,181,0.3)",
+                borderRadius: "6px",
+                padding: "5px 10px",
+                color: "#33b5b5",
+                fontSize: "11px",
+                fontWeight: "600",
+                cursor: "pointer",
+              }}
             >
-              {dateFilter === "today" ? "Today" : dateFilter === "this_week" ? "This Week" : dateFilter === "this_month" ? "This Month" : "Custom Range"} ×
+              {dateFilter === "today"
+                ? "Today"
+                : dateFilter === "this_week"
+                ? "This Week"
+                : dateFilter === "this_month"
+                ? "This Month"
+                : "Custom Range"}{" "}
+              ×
             </button>
           )}
 
@@ -190,47 +451,198 @@ export default function Expenses({ isMobile }) {
         </div>
       </div>
 
+      {/* ── Quick Stats ── */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)",
+          gap: isMobile ? "10px" : "14px",
+        }}
+      >
+        {[
+          {
+            label: "Total Spent",
+            value: "₹" + Number(totalAll).toLocaleString("en-IN"),
+            color: "#33b5b5",
+          },
+          {
+            label: "Done",
+            value: "₹" + Number(doneTotal).toLocaleString("en-IN"),
+            color: "#10b981",
+          },
+          {
+            label: "Pending",
+            value: "₹" + Number(pendingTotal).toLocaleString("en-IN"),
+            color: "#f59e0b",
+          },
+          {
+            label: "Needs Approval",
+            value:
+              approvalCount + " entr" + (approvalCount === 1 ? "y" : "ies"),
+            color: "#818cf8",
+          },
+        ].map((s) => (
+          <div
+            key={s.label}
+            style={{
+              background: "#111",
+              border: "1px solid #1e1e1e",
+              borderRadius: "10px",
+              padding: isMobile ? "12px 14px" : "14px 18px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#555",
+                fontWeight: "600",
+                letterSpacing: "0.05em",
+                marginBottom: "5px",
+              }}
+            >
+              {s.label}
+            </p>
+            <p
+              style={{
+                fontSize: isMobile ? "16px" : "20px",
+                fontWeight: "800",
+                color: s.color,
+              }}
+            >
+              {s.value}
+            </p>
+          </div>
+        ))}
+      </div>
+
       {/* Table */}
-      <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: `${400 + owners.length * 90}px` }}>
+      <div
+        style={{
+          background: "#111",
+          border: "1px solid #1e1e1e",
+          borderRadius: "12px",
+          overflowX: "auto",
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            minWidth: `${400 + owners.length * 90}px`,
+          }}
+        >
           <thead>
             <tr>
-              {["Date", "Category", "Description", "Total", ...owners.map(o => o.name), "Status", ""].map((h, i) => (
-                <th key={i} style={styles.th}>{h}</th>
+              {[
+                "Date",
+                "Category",
+                "Description",
+                "Total",
+                ...owners.map((o) => o.name),
+                "Status",
+                "",
+              ].map((h, i) => (
+                <th key={i} style={styles.th}>
+                  {h}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={colSpan} style={styles.empty}>Loading...</td></tr>
+              <tr>
+                <td colSpan={colSpan} style={styles.empty}>
+                  Loading...
+                </td>
+              </tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={colSpan} style={styles.empty}>No expenses found</td></tr>
+              <tr>
+                <td colSpan={colSpan} style={styles.empty}>
+                  No expenses found
+                </td>
+              </tr>
             ) : (
               filtered.map((exp) => (
                 <tr key={exp.id} style={styles.tr}>
-                  <td style={styles.td}><span style={{ whiteSpace: "nowrap" }}>{formatDate(exp.date)}</span></td>
+                  <td style={styles.td}>
+                    <span style={{ whiteSpace: "nowrap" }}>
+                      {formatDate(exp.date)}
+                    </span>
+                  </td>
                   <td style={styles.td}>
                     <span style={styles.catBadge}>{exp.category}</span>
                   </td>
                   <td style={{ ...styles.td, maxWidth: "160px" }}>
-                    <p style={{ color: "#e0e0e0", fontSize: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{exp.description}</p>
-                    {exp.notes && <p style={{ color: "#555", fontSize: "11px", marginTop: "2px" }}>{exp.notes}</p>}
+                    <p
+                      style={{
+                        color: "#e0e0e0",
+                        fontSize: "13px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {exp.description}
+                    </p>
+                    {exp.notes && (
+                      <p
+                        style={{
+                          color: "#555",
+                          fontSize: "11px",
+                          marginTop: "2px",
+                        }}
+                      >
+                        {exp.notes}
+                      </p>
+                    )}
                   </td>
-                  <td style={{ ...styles.td, fontWeight: "600", color: "#33b5b5", whiteSpace: "nowrap" }}>{fmt(exp.totalAmount)}</td>
+                  <td
+                    style={{
+                      ...styles.td,
+                      fontWeight: "600",
+                      color: "#33b5b5",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {fmt(exp.totalAmount)}
+                  </td>
                   {owners.map((o) => (
-                    <td key={o.id} style={{ ...styles.td, whiteSpace: "nowrap" }}>
+                    <td
+                      key={o.id}
+                      style={{ ...styles.td, whiteSpace: "nowrap" }}
+                    >
                       {fmt((exp.paid_amounts || {})[o.id])}
                     </td>
                   ))}
                   <td style={styles.td}>
-                    <span style={{ ...styles.statusBadge, ...(exp.status === "Done" ? styles.statusDone : styles.statusPending) }}>
+                    <span
+                      style={{
+                        ...styles.statusBadge,
+                        ...(exp.status === "Done"
+                          ? styles.statusDone
+                          : exp.status === "Needs Approval"
+                          ? styles.statusApproval
+                          : styles.statusPending),
+                      }}
+                    >
                       {exp.status}
                     </span>
                   </td>
                   <td style={styles.td}>
                     <div style={{ display: "flex", gap: "6px" }}>
-                      <button onClick={() => openEdit(exp)} style={styles.editBtn}><Pencil size={14} /></button>
-                      <button onClick={() => setDeleteConfirm(exp.id)} style={styles.deleteBtn}><Trash2 size={14} /></button>
+                      <button
+                        onClick={() => openEdit(exp)}
+                        style={styles.editBtn}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={() => setDeleteConfirm(exp.id)}
+                        style={styles.deleteBtn}
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -240,41 +652,262 @@ export default function Expenses({ isMobile }) {
         </table>
       </div>
 
+      {/* ── Per-owner + Category breakdown ── */}
+      {filtered.length > 0 && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+            gap: isMobile ? "12px" : "16px",
+          }}
+        >
+          {/* Per-owner summary */}
+          <div
+            style={{
+              background: "#111",
+              border: "1px solid #1e1e1e",
+              borderRadius: "12px",
+              padding: "16px 20px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#555",
+                fontWeight: "600",
+                letterSpacing: "0.07em",
+                marginBottom: "12px",
+              }}
+            >
+              PER MEMBER
+            </p>
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: "8px" }}
+            >
+              {ownerTotals.map((o) => {
+                const pct =
+                  filteredTotal > 0 ? (o.total / filteredTotal) * 100 : 0;
+                return (
+                  <div key={o.id}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "13px",
+                          color: o.color || "#ccc",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {o.name}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "13px",
+                          color: "#e0e0e0",
+                          fontWeight: "700",
+                        }}
+                      >
+                        ₹{Number(o.total).toLocaleString("en-IN")}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        background: "#1a1a1a",
+                        borderRadius: "4px",
+                        height: "4px",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: pct + "%",
+                          height: "100%",
+                          background: o.color || "#33b5b5",
+                          borderRadius: "4px",
+                          transition: "width 0.3s",
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Category breakdown */}
+          <div
+            style={{
+              background: "#111",
+              border: "1px solid #1e1e1e",
+              borderRadius: "12px",
+              padding: "16px 20px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#555",
+                fontWeight: "600",
+                letterSpacing: "0.07em",
+                marginBottom: "12px",
+              }}
+            >
+              BY CATEGORY
+            </p>
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: "8px" }}
+            >
+              {catBreakdown.map(([cat, amt]) => {
+                const pct = filteredTotal > 0 ? (amt / filteredTotal) * 100 : 0;
+                return (
+                  <div key={cat}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      <span style={{ fontSize: "12px", color: "#888" }}>
+                        {cat}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          color: "#e0e0e0",
+                          fontWeight: "600",
+                        }}
+                      >
+                        ₹{Number(amt).toLocaleString("en-IN")}{" "}
+                        <span style={{ color: "#444", fontWeight: "400" }}>
+                          ({Math.round(pct)}%)
+                        </span>
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        background: "#1a1a1a",
+                        borderRadius: "4px",
+                        height: "3px",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: pct + "%",
+                          height: "100%",
+                          background: "#008080",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add/Edit Modal */}
       {showForm && form && (
         <div style={styles.overlay}>
-          <div style={{ ...styles.modal, maxWidth: isMobile ? "100%" : "600px", margin: isMobile ? "0" : "auto", borderRadius: isMobile ? "16px 16px 0 0" : "16px", position: isMobile ? "fixed" : "relative", bottom: isMobile ? 0 : "auto", left: isMobile ? 0 : "auto", right: isMobile ? 0 : "auto", maxHeight: "90vh" }}>
+          <div
+            style={{
+              ...styles.modal,
+              maxWidth: isMobile ? "100%" : "600px",
+              margin: isMobile ? "0" : "auto",
+              borderRadius: isMobile ? "16px 16px 0 0" : "16px",
+              position: isMobile ? "fixed" : "relative",
+              bottom: isMobile ? 0 : "auto",
+              left: isMobile ? 0 : "auto",
+              right: isMobile ? 0 : "auto",
+              maxHeight: "90vh",
+            }}
+          >
             <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>{editId ? "Edit Expense" : "Add Expense"}</h2>
-              <button onClick={() => setShowForm(false)} style={styles.closeBtn}><X size={18} /></button>
+              <h2 style={styles.modalTitle}>
+                {editId ? "Edit Expense" : "Add Expense"}
+              </h2>
+              <button
+                onClick={() => setShowForm(false)}
+                style={styles.closeBtn}
+              >
+                <X size={18} />
+              </button>
             </div>
-            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div style={{ display: "flex", gap: "12px", flexDirection: isMobile ? "column" : "row" }}>
+            <form
+              onSubmit={handleSubmit}
+              style={{ display: "flex", flexDirection: "column", gap: "14px" }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  flexDirection: isMobile ? "column" : "row",
+                }}
+              >
                 <div style={styles.formGroup}>
                   <label style={styles.formLabel}>Date</label>
-                  <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}
-                    style={{ ...styles.formInput, colorScheme: "dark", fontSize: "16px" }} required />
+                  <input
+                    type="date"
+                    value={form.date}
+                    onChange={(e) => setForm({ ...form, date: e.target.value })}
+                    style={{
+                      ...styles.formInput,
+                      colorScheme: "dark",
+                      fontSize: "16px",
+                    }}
+                    required
+                  />
                 </div>
                 <div style={styles.formGroup}>
                   <label style={styles.formLabel}>Category</label>
-                  <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    style={{ ...styles.formInput, fontSize: "16px" }} required>
-                    {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                  <select
+                    value={form.category}
+                    onChange={(e) =>
+                      setForm({ ...form, category: e.target.value })
+                    }
+                    style={{ ...styles.formInput, fontSize: "16px" }}
+                    required
+                  >
+                    {CATEGORIES.filter((c) => c !== "Maintenance").map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
                   </select>
                 </div>
               </div>
 
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Description</label>
-                <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  style={{ ...styles.formInput, fontSize: "16px" }} required placeholder="What was this for?" />
+                <input
+                  value={form.description}
+                  onChange={(e) =>
+                    setForm({ ...form, description: e.target.value })
+                  }
+                  style={{ ...styles.formInput, fontSize: "16px" }}
+                  required
+                  placeholder="What was this for?"
+                />
               </div>
 
               <p style={styles.formSection}>Who Paid?</p>
               <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                 {owners.map((o) => (
-                  <div key={o.id} style={{ ...styles.formGroup, minWidth: "120px" }}>
-                    <label style={{ ...styles.formLabel, color: o.color || "#666" }}>{o.name} (₹)</label>
+                  <div
+                    key={o.id}
+                    style={{ ...styles.formGroup, minWidth: "120px" }}
+                  >
+                    <label
+                      style={{ ...styles.formLabel, color: o.color || "#666" }}
+                    >
+                      {o.name} (₹)
+                    </label>
                     <input
                       type="number"
                       value={(form.paid_amounts || {})[o.id] ?? ""}
@@ -287,35 +920,82 @@ export default function Expenses({ isMobile }) {
               </div>
 
               {owners.length === 0 && (
-                <p style={{ fontSize: "12px", color: "#555", fontStyle: "italic" }}>
+                <p
+                  style={{
+                    fontSize: "12px",
+                    color: "#555",
+                    fontStyle: "italic",
+                  }}
+                >
                   Add owners first to track who paid.
                 </p>
               )}
 
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Total Amount (₹)</label>
-                <input type="number" value={form.totalAmount} readOnly
-                  style={{ ...styles.formInput, background: "#141414", color: "#33b5b5", fontWeight: "600", cursor: "not-allowed" }} />
+                <input
+                  type="number"
+                  value={form.totalAmount}
+                  readOnly
+                  style={{
+                    ...styles.formInput,
+                    background: "#141414",
+                    color: "#33b5b5",
+                    fontWeight: "600",
+                    cursor: "not-allowed",
+                  }}
+                />
               </div>
 
-              <div style={{ display: "flex", gap: "12px", flexDirection: isMobile ? "column" : "row" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  flexDirection: isMobile ? "column" : "row",
+                }}
+              >
                 <div style={styles.formGroup}>
                   <label style={styles.formLabel}>Status</label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
-                    style={{ ...styles.formInput, fontSize: "16px" }}>
+                  <select
+                    value={form.status}
+                    onChange={(e) =>
+                      setForm({ ...form, status: e.target.value })
+                    }
+                    style={{ ...styles.formInput, fontSize: "16px" }}
+                  >
                     <option>Done</option>
                     <option>Pending</option>
+                    <option>Needs Approval</option>
                   </select>
                 </div>
                 <div style={styles.formGroup}>
                   <label style={styles.formLabel}>Notes</label>
-                  <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                    style={{ ...styles.formInput, fontSize: "16px" }} placeholder="Optional note..." />
+                  <input
+                    value={form.notes}
+                    onChange={(e) =>
+                      setForm({ ...form, notes: e.target.value })
+                    }
+                    style={{ ...styles.formInput, fontSize: "16px" }}
+                    placeholder="Optional note..."
+                  />
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "4px" }}>
-                <button type="button" onClick={() => setShowForm(false)} style={styles.cancelBtn}>Cancel</button>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "10px",
+                  justifyContent: "flex-end",
+                  marginTop: "4px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  style={styles.cancelBtn}
+                >
+                  Cancel
+                </button>
                 <button type="submit" style={styles.submitBtn}>
                   <Check size={15} />
                   {editId ? "Update" : "Add Expense"}
@@ -331,11 +1011,30 @@ export default function Expenses({ isMobile }) {
         <div style={styles.overlay}>
           <div style={{ ...styles.modal, maxWidth: "360px" }}>
             <h2 style={styles.modalTitle}>Delete Expense?</h2>
-            <p style={{ color: "#888", fontSize: "14px", margin: "12px 0 24px" }}>This action cannot be undone.</p>
-            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-              <button onClick={() => setDeleteConfirm(null)} style={styles.cancelBtn}>Cancel</button>
-              <button onClick={doDelete} style={{ ...styles.submitBtn, background: "#ef4444" }}>
-                <Trash2 size={15} />Delete
+            <p
+              style={{ color: "#888", fontSize: "14px", margin: "12px 0 24px" }}
+            >
+              This action cannot be undone.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                style={styles.cancelBtn}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doDelete}
+                style={{ ...styles.submitBtn, background: "#ef4444" }}
+              >
+                <Trash2 size={15} />
+                Delete
               </button>
             </div>
           </div>
@@ -347,63 +1046,165 @@ export default function Expenses({ isMobile }) {
 
 const styles = {
   addBtn: {
-    display: "flex", alignItems: "center", gap: "6px",
-    padding: "10px 16px", background: "linear-gradient(135deg, #008080, #00a0a0)",
-    border: "none", borderRadius: "8px", color: "#fff", fontWeight: "600",
-    fontSize: "14px", cursor: "pointer", flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "10px 16px",
+    background: "linear-gradient(135deg, #008080, #00a0a0)",
+    border: "none",
+    borderRadius: "8px",
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: "14px",
+    cursor: "pointer",
+    flexShrink: 0,
   },
   searchInput: {
-    flex: 1, padding: "10px 14px", background: "#111", border: "1px solid #222",
-    borderRadius: "8px", color: "#e0e0e0", outline: "none",
+    flex: 1,
+    padding: "10px 14px",
+    background: "#111",
+    border: "1px solid #222",
+    borderRadius: "8px",
+    color: "#e0e0e0",
+    outline: "none",
   },
   select: {
-    padding: "10px 14px", background: "#111", border: "1px solid #222",
-    borderRadius: "8px", color: "#e0e0e0", outline: "none",
+    padding: "10px 14px",
+    background: "#111",
+    border: "1px solid #222",
+    borderRadius: "8px",
+    color: "#e0e0e0",
+    outline: "none",
   },
   th: {
-    padding: "12px 14px", textAlign: "left", fontSize: "11px", fontWeight: "600",
-    color: "#555", textTransform: "uppercase", letterSpacing: "0.06em",
-    borderBottom: "1px solid #1e1e1e", whiteSpace: "nowrap",
+    padding: "12px 14px",
+    textAlign: "left",
+    fontSize: "11px",
+    fontWeight: "600",
+    color: "#555",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    borderBottom: "1px solid #1e1e1e",
+    whiteSpace: "nowrap",
   },
   tr: { borderBottom: "1px solid #161616" },
-  td: { padding: "13px 14px", fontSize: "13px", color: "#999", verticalAlign: "middle" },
-  empty: { padding: "40px", textAlign: "center", color: "#444", fontSize: "14px" },
-  catBadge: {
-    padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: "600",
-    background: "rgba(0,128,128,0.15)", color: "#33b5b5", whiteSpace: "nowrap",
+  td: {
+    padding: "13px 14px",
+    fontSize: "13px",
+    color: "#999",
+    verticalAlign: "middle",
   },
-  statusBadge: { padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: "600", whiteSpace: "nowrap" },
+  empty: {
+    padding: "40px",
+    textAlign: "center",
+    color: "#444",
+    fontSize: "14px",
+  },
+  catBadge: {
+    padding: "3px 10px",
+    borderRadius: "20px",
+    fontSize: "11px",
+    fontWeight: "600",
+    background: "rgba(0,128,128,0.15)",
+    color: "#33b5b5",
+    whiteSpace: "nowrap",
+  },
+  statusBadge: {
+    padding: "3px 10px",
+    borderRadius: "20px",
+    fontSize: "11px",
+    fontWeight: "600",
+    whiteSpace: "nowrap",
+  },
   statusDone: { background: "rgba(16,185,129,0.15)", color: "#34d399" },
   statusPending: { background: "rgba(245,158,11,0.15)", color: "#fbbf24" },
-  editBtn: { padding: "6px", borderRadius: "6px", border: "1px solid #2a2a2a", background: "#1a1a1a", color: "#888", cursor: "pointer" },
-  deleteBtn: { padding: "6px", borderRadius: "6px", border: "1px solid rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.08)", color: "#ef4444", cursor: "pointer" },
+  statusApproval: { background: "rgba(99,102,241,0.15)", color: "#818cf8" },
+  editBtn: {
+    padding: "6px",
+    borderRadius: "6px",
+    border: "1px solid #2a2a2a",
+    background: "#1a1a1a",
+    color: "#888",
+    cursor: "pointer",
+  },
+  deleteBtn: {
+    padding: "6px",
+    borderRadius: "6px",
+    border: "1px solid rgba(239,68,68,0.2)",
+    background: "rgba(239,68,68,0.08)",
+    color: "#ef4444",
+    cursor: "pointer",
+  },
   overlay: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex",
-    alignItems: "flex-end", justifyContent: "center", zIndex: 100,
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.75)",
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    zIndex: 100,
   },
   modal: {
-    background: "#111", border: "1px solid #222",
-    padding: "24px", width: "100%", overflowY: "auto",
+    background: "#111",
+    border: "1px solid #222",
+    padding: "24px",
+    width: "100%",
+    overflowY: "auto",
   },
-  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" },
+  modalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "18px",
+  },
   modalTitle: { fontSize: "17px", fontWeight: "600", color: "#f0f0f0" },
-  closeBtn: { background: "none", border: "none", color: "#555", cursor: "pointer", padding: "4px" },
+  closeBtn: {
+    background: "none",
+    border: "none",
+    color: "#555",
+    cursor: "pointer",
+    padding: "4px",
+  },
   formGroup: { display: "flex", flexDirection: "column", gap: "6px", flex: 1 },
   formLabel: { fontSize: "12px", color: "#777", fontWeight: "500" },
   formInput: {
-    padding: "10px 12px", background: "#1a1a1a", border: "1px solid #2a2a2a",
-    borderRadius: "7px", color: "#e0e0e0", fontSize: "14px", outline: "none", width: "100%",
+    padding: "10px 12px",
+    background: "#1a1a1a",
+    border: "1px solid #2a2a2a",
+    borderRadius: "7px",
+    color: "#e0e0e0",
+    fontSize: "14px",
+    outline: "none",
+    width: "100%",
     boxSizing: "border-box",
   },
-  formSection: { fontSize: "12px", color: "#666", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.06em" },
+  formSection: {
+    fontSize: "12px",
+    color: "#666",
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
   cancelBtn: {
-    padding: "10px 18px", background: "#1a1a1a", border: "1px solid #2a2a2a",
-    borderRadius: "8px", color: "#888", cursor: "pointer", fontSize: "14px",
+    padding: "10px 18px",
+    background: "#1a1a1a",
+    border: "1px solid #2a2a2a",
+    borderRadius: "8px",
+    color: "#888",
+    cursor: "pointer",
+    fontSize: "14px",
   },
   submitBtn: {
-    display: "flex", alignItems: "center", gap: "7px",
-    padding: "10px 20px", background: "linear-gradient(135deg, #008080, #00a0a0)",
-    border: "none", borderRadius: "8px", color: "#fff", fontWeight: "600",
-    fontSize: "14px", cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    padding: "10px 20px",
+    background: "linear-gradient(135deg, #008080, #00a0a0)",
+    border: "none",
+    borderRadius: "8px",
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: "14px",
+    cursor: "pointer",
   },
 };

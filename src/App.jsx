@@ -14,6 +14,7 @@ import GuestForm from "./pages/GuestForm";
 import UploadDocs from "./pages/UploadDocs";
 import LandingPage from "./pages/LandingPage";
 import Payouts from "./pages/Payouts";
+import Maintenance from "./pages/Maintenance";
 import { Menu } from "lucide-react";
 import { useWindowWidth } from "./hooks/useWindowWidth";
 
@@ -26,6 +27,7 @@ const PAGE_TITLES = {
   guestpromos: "Promos",
   owners: "Owners",
   payouts: "Payouts",
+  maintenance: "Maintenance",
 };
 
 function AppInner() {
@@ -71,6 +73,7 @@ function AppInner() {
     guestpromos: <GuestPromos isMobile={isMobile} />,
     owners: <Owners isMobile={isMobile} />,
     payouts: <Payouts isMobile={isMobile} />,
+    maintenance: <Maintenance isMobile={isMobile} />,
   };
 
   const handleNavChange = (page) => {

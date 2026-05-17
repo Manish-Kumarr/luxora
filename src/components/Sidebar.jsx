@@ -12,6 +12,7 @@ import {
   Eye,
   EyeOff,
   Banknote,
+  Wrench,
 } from "lucide-react";
 import { useState } from "react";
 import { useApp } from "../context/AppContext";
@@ -21,6 +22,7 @@ const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "bookings", label: "Bookings", icon: CalendarDays },
   { id: "expenses", label: "Expenses", icon: Receipt },
+  { id: "maintenance", label: "Maintenance", icon: Wrench },
   { id: "payouts", label: "Payouts", icon: Banknote },
   { id: "settlement", label: "Settlement", icon: ArrowLeftRight },
   { id: "analytics", label: "Analytics", icon: BarChart3 },

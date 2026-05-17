@@ -26,6 +26,7 @@ import {
   ChevronDown,
   Ban,
   Pencil,
+  Wrench,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 
@@ -48,8 +49,25 @@ const STATUS_COLOR = {
 
 const STATUS_PIE_COLORS = ["#f59e0b", "#33b5b5", "#10b981", "#555", "#ef4444"];
 
+function calcSettlement(balances) {
+  const people = Object.entries(balances).map(([id, bal]) => ({ id, bal }));
+  const creditors = people.filter((p) => p.bal > 0.01).sort((a, b) => b.bal - a.bal);
+  const debtors = people.filter((p) => p.bal < -0.01).sort((a, b) => a.bal - b.bal);
+  const transactions = [];
+  let ci = 0, di = 0;
+  while (ci < creditors.length && di < debtors.length) {
+    const c = creditors[ci], d = debtors[di];
+    const amount = Math.min(c.bal, -d.bal);
+    if (amount > 0.01) transactions.push({ from: d.id, to: c.id, amount: Math.round(amount) });
+    c.bal -= amount; d.bal += amount;
+    if (Math.abs(c.bal) < 0.01) ci++;
+    if (Math.abs(d.bal) < 0.01) di++;
+  }
+  return transactions;
+}
+
 export default function Dashboard({ isMobile }) {
-  const { expenses, bookings, payments, roomRates, updateRoomRates, owners } =
+  const { expenses, bookings, payments, roomRates, updateRoomRates, owners, memberTransfers } =
     useApp();
   const [editingRates, setEditingRates] = useState(false);
   const [rateForm, setRateForm] = useState({
@@ -185,7 +203,7 @@ export default function Dashboard({ isMobile }) {
 
   // ── Outstanding balances ──
   const outstandingBookings = bookings
-    .filter((b) => b.status !== "cancelled" && b.status !== "checked-out")
+    .filter((b) => b.status === "confirmed" || b.status === "checked-in")
     .map((b) => {
       const bPayments = payments.filter((p) => p.booking_id === b.id);
       const paid = bPayments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -213,8 +231,115 @@ export default function Dashboard({ isMobile }) {
     .sort((a, b) => b.balance - a.balance);
 
   // ── Pending expenses ──
-  const pendingExpenses = expenses.filter((e) => e.status === "Pending");
+  const pendingExpenses = expenses.filter((e) => (e.status === "Pending" || e.status === "Needs Approval") && e.category !== "Maintenance");
+
+  // ── Open maintenance issues ──
+  const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
+  const openMaintenanceIssues = expenses
+    .filter((e) => e.category === "Maintenance" && (e.maintenance_status === "open" || e.maintenance_status === "in-progress"))
+    .sort((a, b) => (PRIORITY_ORDER[a.issue_priority] ?? 2) - (PRIORITY_ORDER[b.issue_priority] ?? 2));
   const pendingExpensesTotal = pendingExpenses.reduce((s, e) => s + e.totalAmount, 0);
+
+  // ── Docs pending ──
+  const docsPendingBookings = bookings.filter(
+    (b) =>
+      (b.status === "confirmed" || b.status === "checked-in") &&
+      (!b.docs_status || b.docs_status === "pending")
+  );
+
+  // ── Upcoming balance due (advance tracking) ──
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const sevenDaysLater = new Date(today);
+  sevenDaysLater.setDate(today.getDate() + 7);
+  const upcomingBalanceDue = bookings
+    .filter((b) => {
+      if (b.status === "cancelled") return false;
+      if (!b.check_in) return false;
+      const ci = new Date(b.check_in);
+      ci.setHours(0, 0, 0, 0);
+      return ci >= today && ci <= sevenDaysLater;
+    })
+    .map((b) => {
+      const bPayments = payments.filter((p) => p.booking_id === b.id);
+      const totalPaid = bPayments.reduce((s, p) => s + (p.amount || 0), 0);
+      const nights = (b.check_in && b.check_out) ? Math.max(0, (new Date(b.check_out) - new Date(b.check_in)) / 86400000) : 0;
+      const roomRaw = b.custom_room_price != null ? Number(b.custom_room_price) * nights : (() => {
+        if (!b.check_in || !b.check_out) return 0;
+        const start = new Date(b.check_in);
+        const end = new Date(b.check_out);
+        let total = 0;
+        const cur = new Date(start);
+        while (cur < end) {
+          const day = cur.getDay();
+          total += (day === 0 || day === 5 || day === 6) ? roomRates.weekend_rate : roomRates.weekday_rate;
+          cur.setDate(cur.getDate() + 1);
+        }
+        return total;
+      })();
+      const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
+      const disc = Math.min(Math.round((roomRaw + addonRaw) * ((b.discount || 0) + (b.promo_discount || 0)) / 100), 200);
+      const due = roomRaw + addonRaw - disc;
+      const balance = due - totalPaid;
+      return { ...b, totalPaid, balance, due };
+    })
+    .filter((b) => b.totalPaid > 0 && b.balance > 0)
+    .sort((a, b) => new Date(a.check_in) - new Date(b.check_in));
+
+  // ── Upcoming check-ins (next 7 days, excl. today) ──
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const upcomingCheckIns = bookings
+    .filter((b) => {
+      if (b.status === "cancelled") return false;
+      if (!b.check_in) return false;
+      const ci = new Date(b.check_in);
+      ci.setHours(0, 0, 0, 0);
+      return ci >= tomorrow && ci <= sevenDaysLater;
+    })
+    .sort((a, b) => new Date(a.check_in) - new Date(b.check_in));
+
+  // ── Occupancy Rate ──
+  const bookedDays = new Set();
+  bookings
+    .filter((b) => b.status !== "cancelled" && b.check_in && b.check_out)
+    .forEach((b) => {
+      const cur = new Date(b.check_in);
+      const end = new Date(b.check_out);
+      while (cur < end) {
+        const ds = cur.toISOString().split("T")[0];
+        if (inRange(ds)) bookedDays.add(ds);
+        cur.setDate(cur.getDate() + 1);
+      }
+    });
+  let totalDaysInRange;
+  if (dateRange.from && dateRange.to) {
+    totalDaysInRange = Math.max(1, (new Date(dateRange.to) - new Date(dateRange.from)) / 86400000 + 1);
+  } else {
+    const allDates = bookings.filter((b) => b.check_in).map((b) => b.check_in).sort();
+    totalDaysInRange = allDates.length > 0
+      ? Math.max(1, (new Date(todayStr) - new Date(allDates[0])) / 86400000 + 1)
+      : 30;
+  }
+  const occupancyRate = Math.min(100, Math.round((bookedDays.size / totalDaysInRange) * 100));
+
+  // ── Settlement Summary ──
+  const settleBalances = {};
+  owners.forEach((o) => { settleBalances[o.id] = 0; });
+  expenses.forEach((e) => {
+    if (!e.paid_amounts) return;
+    const perPerson = (e.totalAmount || 0) / owners.length;
+    owners.forEach((o) => {
+      const paid = Number(e.paid_amounts[o.id] || 0);
+      settleBalances[o.id] += paid - perPerson;
+    });
+  });
+  (memberTransfers || []).forEach((t) => {
+    if (settleBalances[t.from_owner_id] !== undefined) settleBalances[t.from_owner_id] += Number(t.amount);
+    if (settleBalances[t.to_owner_id] !== undefined) settleBalances[t.to_owner_id] -= Number(t.amount);
+  });
+  const settleTxns = calcSettlement(settleBalances);
+  const ownerById = Object.fromEntries(owners.map((o) => [o.id, o]));
 
   const bookingStatusData = [
     {
@@ -421,6 +546,27 @@ export default function Dashboard({ isMobile }) {
         </div>
       </div>
 
+      {/* ── QUICK KPI ROW ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "16px" }}>
+        {[
+          { label: "Revenue Collected", value: fmt(totalRevenue), color: "#10b981", sub: "payments received" },
+          { label: "Total Expenses", value: fmt(totalExpenses), color: "#ef4444", sub: "all categories" },
+          {
+            label: "Net Profit",
+            value: (totalRevenue - totalExpenses >= 0 ? "+" : "") + fmt(totalRevenue - totalExpenses),
+            color: totalRevenue - totalExpenses >= 0 ? "#33b5b5" : "#ef4444",
+            sub: "revenue − expenses",
+          },
+          { label: "Occupancy Rate", value: occupancyRate + "%", color: "#f59e0b", sub: bookedDays.size + " days booked" },
+        ].map((k) => (
+          <div key={k.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px" }}>
+            <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", letterSpacing: "0.05em", marginBottom: "6px" }}>{k.label}</p>
+            <p style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: "800", color: k.color, marginBottom: "2px" }}>{k.value}</p>
+            <p style={{ fontSize: "11px", color: "#444" }}>{k.sub}</p>
+          </div>
+        ))}
+      </div>
+
       {/* ── TODAY'S ACTIVITY ── */}
       {(todayCheckIns.length > 0 || todayCheckOuts.length > 0) && (
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? "10px" : "16px" }}>
@@ -486,6 +632,9 @@ export default function Dashboard({ isMobile }) {
         </div>
       )}
 
+      {/* ── ACTION CARDS GRID ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? "14px" : "16px", alignItems: "start" }}>
+
       {/* ── OUTSTANDING BALANCES ── */}
       {outstandingBookings.length > 0 && (
         <div style={{ background: "#111", border: "1px solid rgba(245,158,11,0.2)", borderRadius: "12px", overflow: "hidden" }}>
@@ -522,6 +671,108 @@ export default function Dashboard({ isMobile }) {
         </div>
       )}
 
+      {/* ── DOCS PENDING ── */}
+      {docsPendingBookings.length > 0 && (
+        <div style={{ background: "#111", border: "1px solid rgba(6,182,212,0.2)", borderRadius: "12px", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #1e1e1e", background: "rgba(6,182,212,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#06b6d4" }} />
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "#06b6d4" }}>Docs Pending</p>
+            </div>
+            <span style={{ fontSize: "12px", fontWeight: "700", color: "#06b6d4" }}>
+              {docsPendingBookings.length} guest{docsPendingBookings.length > 1 ? "s" : ""}
+            </span>
+          </div>
+          <div>
+            {docsPendingBookings.slice(0, 5).map((b, i) => {
+              const phone10 = (b.phone || "").replace(/\D/g, "").slice(-10);
+              const msg = encodeURIComponent(
+                `Hi ${b.name}! Your Luxora check-in is on ${b.check_in}. Please upload your Aadhaar here: ${window.location.origin}/upload?id=${b.id}`
+              );
+              const waLink = `https://wa.me/91${phone10}?text=${msg}`;
+              return (
+                <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "11px 14px" : "11px 16px", borderBottom: i < Math.min(docsPendingBookings.length, 5) - 1 ? "1px solid #161616" : "none", gap: "10px", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>{b.name}</p>
+                    <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>{b.phone} · Check-in: {b.check_in}</p>
+                  </div>
+                  <a href={waLink} target="_blank" rel="noopener noreferrer"
+                    style={{ display: "flex", alignItems: "center", gap: "5px", background: "rgba(37,211,102,0.1)", border: "1px solid rgba(37,211,102,0.3)", borderRadius: "8px", padding: "5px 10px", color: "#25d366", fontSize: "12px", fontWeight: "600", textDecoration: "none", flexShrink: 0 }}>
+                    WhatsApp
+                  </a>
+                </div>
+              );
+            })}
+            {docsPendingBookings.length > 5 && (
+              <p style={{ padding: "10px 16px", fontSize: "12px", color: "#444", borderTop: "1px solid #161616" }}>
+                and {docsPendingBookings.length - 5} more
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── UPCOMING CHECK-INS (7 days) ── */}
+      {upcomingCheckIns.length > 0 && (
+        <div style={{ background: "#111", border: "1px solid rgba(51,181,181,0.2)", borderRadius: "12px", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #1e1e1e", background: "rgba(51,181,181,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#33b5b5" }} />
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "#33b5b5" }}>Upcoming Check-ins</p>
+            </div>
+            <span style={{ fontSize: "12px", fontWeight: "700", color: "#33b5b5" }}>Next 7 days · {upcomingCheckIns.length} booking{upcomingCheckIns.length > 1 ? "s" : ""}</span>
+          </div>
+          <div>
+            {upcomingCheckIns.slice(0, 5).map((b, i) => (
+              <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "11px 14px" : "11px 16px", borderBottom: i < Math.min(upcomingCheckIns.length, 5) - 1 ? "1px solid #161616" : "none", gap: "10px", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>{b.name}</p>
+                  <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>{b.phone} · {b.guests_count || 1} guest{(b.guests_count || 1) > 1 ? "s" : ""}</p>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <p style={{ fontSize: "13px", fontWeight: "700", color: "#33b5b5" }}>{b.check_in}</p>
+                  <span style={{ fontSize: "11px", fontWeight: "600", padding: "2px 8px", borderRadius: "20px", background: `${STATUS_COLOR[b.status]}18`, border: `1px solid ${STATUS_COLOR[b.status]}40`, color: STATUS_COLOR[b.status] }}>{b.status}</span>
+                </div>
+              </div>
+            ))}
+            {upcomingCheckIns.length > 5 && (
+              <p style={{ padding: "10px 16px", fontSize: "12px", color: "#444", borderTop: "1px solid #161616" }}>+{upcomingCheckIns.length - 5} more</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── UPCOMING BALANCE DUE ── */}
+      {upcomingBalanceDue.length > 0 && (
+        <div style={{ background: "#111", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "12px", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #1e1e1e", background: "rgba(16,185,129,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981" }} />
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "#10b981" }}>Upcoming Balance Due</p>
+            </div>
+            <span style={{ fontSize: "12px", fontWeight: "700", color: "#10b981" }}>
+              Checking in within 7 days
+            </span>
+          </div>
+          <div>
+            {upcomingBalanceDue.slice(0, 5).map((b, i) => (
+              <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "11px 14px" : "11px 16px", borderBottom: i < Math.min(upcomingBalanceDue.length, 5) - 1 ? "1px solid #161616" : "none", gap: "10px", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>{b.name}</p>
+                  <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>Check-in: {b.check_in} · Paid: {fmt(b.totalPaid)}</p>
+                </div>
+                <p style={{ fontSize: "14px", fontWeight: "700", color: "#ef4444", flexShrink: 0 }}>{fmt(b.balance)} due</p>
+              </div>
+            ))}
+            {upcomingBalanceDue.length > 5 && (
+              <p style={{ padding: "10px 16px", fontSize: "12px", color: "#444", borderTop: "1px solid #161616" }}>
+                +{upcomingBalanceDue.length - 5} more
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── PENDING EXPENSES ── */}
       {pendingExpenses.length > 0 && (
         <div style={{ background: "#111", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "12px", overflow: "hidden" }}>
@@ -552,6 +803,89 @@ export default function Dashboard({ isMobile }) {
           </div>
         </div>
       )}
+
+      {/* ── OPEN MAINTENANCE ── */}
+      {openMaintenanceIssues.length > 0 && (
+        <div style={{ background: "#111", border: "1px solid rgba(249,115,22,0.2)", borderRadius: "12px", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #1e1e1e", background: "rgba(249,115,22,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <Wrench size={14} color="#f97316" />
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "#f97316" }}>Open Maintenance Issues</p>
+            </div>
+            <span style={{ fontSize: "12px", fontWeight: "700", color: "#f97316" }}>
+              {openMaintenanceIssues.filter(e => e.maintenance_status === "open").length} open · {openMaintenanceIssues.filter(e => e.maintenance_status === "in-progress").length} in progress
+            </span>
+          </div>
+          <div>
+            {openMaintenanceIssues.slice(0, 5).map((e, i) => {
+              const pColors = { urgent: "#ef4444", high: "#f97316", medium: "#f59e0b", low: "#34d399" };
+              const pColor = pColors[e.issue_priority] || "#f59e0b";
+              const sColor = e.maintenance_status === "in-progress" ? "#f59e0b" : "#f87171";
+              return (
+                <div key={e.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "11px 14px" : "11px 16px", borderBottom: i < Math.min(openMaintenanceIssues.length, 5) - 1 ? "1px solid #161616" : "none", gap: "10px" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                      <span style={{ fontSize: "10px", fontWeight: "700", color: pColor, background: pColor + "18", border: `1px solid ${pColor}33`, borderRadius: "20px", padding: "1px 6px", textTransform: "capitalize" }}>{e.issue_priority}</span>
+                      {e.room && <span style={{ fontSize: "11px", color: "#555" }}>{e.room}</span>}
+                    </div>
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.description}</p>
+                  </div>
+                  <span style={{ fontSize: "11px", fontWeight: "600", color: sColor, background: sColor + "18", border: `1px solid ${sColor}33`, borderRadius: "20px", padding: "2px 8px", flexShrink: 0, textTransform: "capitalize" }}>
+                    {e.maintenance_status === "in-progress" ? "In Progress" : "Open"}
+                  </span>
+                </div>
+              );
+            })}
+            {openMaintenanceIssues.length > 5 && (
+              <p style={{ padding: "10px 16px", fontSize: "12px", color: "#444", borderTop: "1px solid #161616" }}>
+                +{openMaintenanceIssues.length - 5} more open issues
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── SETTLEMENT SUMMARY ── */}
+      {settleTxns.length > 0 && (
+        <div style={{ background: "#111", border: "1px solid rgba(139,92,246,0.2)", borderRadius: "12px", overflow: "hidden", gridColumn: isMobile ? undefined : "1 / -1" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #1e1e1e", background: "rgba(139,92,246,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <IndianRupee size={14} color="#8b5cf6" />
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "#8b5cf6" }}>Settlement Due</p>
+            </div>
+            <span style={{ fontSize: "12px", fontWeight: "700", color: "#8b5cf6" }}>{settleTxns.length} transfer{settleTxns.length > 1 ? "s" : ""} pending</span>
+          </div>
+          <div>
+            {settleTxns.map((t, i) => {
+              const from = ownerById[t.from];
+              const to = ownerById[t.to];
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "12px 16px", borderBottom: i < settleTxns.length - 1 ? "1px solid #161616" : "none", gap: "10px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: (from?.color || "#555") + "33", border: `1px solid ${from?.color || "#555"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: from?.color || "#ccc" }}>
+                        {from?.name?.[0] || "?"}
+                      </div>
+                      <span style={{ fontSize: "12px", color: "#888" }}>→</span>
+                      <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: (to?.color || "#555") + "33", border: `1px solid ${to?.color || "#555"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: to?.color || "#ccc" }}>
+                        {to?.name?.[0] || "?"}
+                      </div>
+                    </div>
+                    <p style={{ fontSize: "13px", color: "#ccc" }}>
+                      <span style={{ color: from?.color || "#ccc", fontWeight: "600" }}>{from?.name || "?"}</span>
+                      <span style={{ color: "#555" }}> pays </span>
+                      <span style={{ color: to?.color || "#ccc", fontWeight: "600" }}>{to?.name || "?"}</span>
+                    </p>
+                  </div>
+                  <p style={{ fontSize: "15px", fontWeight: "700", color: "#8b5cf6", flexShrink: 0 }}>{fmt(t.amount)}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      </div>{/* end action cards grid */}
 
       {/* Expense Stat Cards */}
       <div

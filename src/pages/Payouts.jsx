@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus, Trash2, X, Check, Pencil } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
 const fmt = (n) => "₹" + Number(n).toLocaleString("en-IN");
@@ -23,13 +23,28 @@ const isoToDate = (iso) => iso ? iso.split("T")[0] : null;
 const COLORS = ["#008080", "#6366f1", "#f59e0b", "#10b981", "#ec4899", "#3b82f6"];
 
 export default function Payouts({ isMobile }) {
-  const { bookings, payments, expenses, owners, markBrokerCommissionPaid, addExpense } = useApp();
+  const { bookings, payments, expenses, owners, markBrokerCommissionPaid, ownerPayouts, addOwnerPayout, updateOwnerPayout, deleteOwnerPayout } = useApp();
 
   const [statusFilter, setStatusFilter] = useState("all");
+  const [brokerSearch, setBrokerSearch] = useState("");
   const [dateFilter, setDateFilter] = useState("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [marking, setMarking] = useState(null);
+
+  // Owner payout modal
+  const [payoutModal, setPayoutModal] = useState(false);
+  const [payoutForm, setPayoutForm] = useState({ owner_id: "", amount: "", date: new Date().toISOString().split("T")[0], method: "Cash", notes: "" });
+  const [payoutSaving, setPayoutSaving] = useState(false);
+  const [deletePayoutId, setDeletePayoutId] = useState(null);
+
+  // Edit payout
+  const [editPayoutId, setEditPayoutId] = useState(null);
+  const [editPayoutForm, setEditPayoutForm] = useState({ amount: "", date: "", method: "Cash", notes: "" });
+  const [editPayoutSaving, setEditPayoutSaving] = useState(false);
+
+  // History filter
+  const [historyOwnerFilter, setHistoryOwnerFilter] = useState("all");
 
   const dateRange = useMemo(() => {
     const now = new Date();
@@ -68,8 +83,24 @@ export default function Payouts({ isMobile }) {
     const matchDate = b.broker_commission_paid
       ? inRange(b.broker_commission_paid_at)
       : (dateRange.from || dateRange.to) ? false : true;
-    return matchStatus && matchDate;
+    const matchSearch = !brokerSearch.trim() ||
+      (b.broker_name || "").toLowerCase().includes(brokerSearch.toLowerCase()) ||
+      (b.name || "").toLowerCase().includes(brokerSearch.toLowerCase());
+    return matchStatus && matchDate && matchSearch;
   });
+
+  // ── Per-broker summary ──
+  const brokerSummary = Object.entries(
+    brokerBookings.reduce((acc, b) => {
+      const name = b.broker_name;
+      if (!acc[name]) acc[name] = { total: 0, paid: 0, pending: 0, count: 0, phone: b.broker_phone || "" };
+      acc[name].total += Number(b.broker_commission);
+      acc[name].count += 1;
+      if (b.broker_commission_paid) acc[name].paid += Number(b.broker_commission);
+      else acc[name].pending += Number(b.broker_commission);
+      return acc;
+    }, {})
+  ).sort((a, b) => b[1].total - a[1].total);
 
   const dateScopedBroker = brokerBookings.filter((b) =>
     b.broker_commission_paid ? inRange(b.broker_commission_paid_at) : !(dateRange.from || dateRange.to)
@@ -79,32 +110,58 @@ export default function Payouts({ isMobile }) {
 
   const handleToggle = async (b) => {
     setMarking(b.id);
-    const markingPaid = !b.broker_commission_paid;
-    await markBrokerCommissionPaid(b.id, markingPaid);
-    if (markingPaid) {
-      const today = new Date().toISOString().split("T")[0];
-      await addExpense({
-        date: today,
-        category: "Miscellaneous",
-        description: `Broker Commission – ${b.broker_name} (Guest: ${b.name})`,
-        totalAmount: Number(b.broker_commission),
-        paid_amounts: {},
-        status: "Done",
-        notes: `Auto-created on broker payout. Booking: ${b.check_in} to ${b.check_out}`,
-      });
-    }
+    await markBrokerCommissionPaid(b.id, !b.broker_commission_paid);
     setMarking(null);
   };
 
-  // Owner payout calculations (all-time, no date filter)
+  // ── Owner payout calculations (all-time, no date filter) ──
   const totalRevenue = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const brokerPaidTotal = bookings
     .filter((b) => b.broker_commission_paid && Number(b.broker_commission) > 0)
     .reduce((s, b) => s + Number(b.broker_commission), 0);
   const netRevenue = totalRevenue - brokerPaidTotal;
-  const totalExpenses = expenses.reduce((s, e) => s + (e.totalAmount || 0), 0);
+  const regularExpenses = expenses.filter(e => e.category !== "Maintenance").reduce((s, e) => s + (e.totalAmount || 0), 0);
+  const maintenanceExpenses = expenses.filter(e => e.category === "Maintenance").reduce((s, e) => s + (e.totalAmount || 0), 0);
+  const totalExpenses = regularExpenses + maintenanceExpenses;
   const profit = netRevenue - totalExpenses;
   const isProfit = profit >= 0;
+
+  // ── Owner payout handlers ──
+  const handleAddPayout = async () => {
+    if (!payoutForm.owner_id || !payoutForm.amount) return;
+    setPayoutSaving(true);
+    await addOwnerPayout({
+      owner_id: payoutForm.owner_id,
+      amount: Number(payoutForm.amount),
+      date: payoutForm.date,
+      method: payoutForm.method,
+      notes: payoutForm.notes,
+    });
+    setPayoutSaving(false);
+    setPayoutModal(false);
+    setPayoutForm({ owner_id: "", amount: "", date: new Date().toISOString().split("T")[0], method: "Cash", notes: "" });
+  };
+
+  const handleEditPayout = async () => {
+    if (!editPayoutForm.amount) return;
+    setEditPayoutSaving(true);
+    await updateOwnerPayout(editPayoutId, {
+      amount: Number(editPayoutForm.amount),
+      date: editPayoutForm.date,
+      method: editPayoutForm.method,
+      notes: editPayoutForm.notes,
+    });
+    setEditPayoutSaving(false);
+    setEditPayoutId(null);
+  };
+
+  const pendingBrokerCount = brokerBookings.filter(b => !b.broker_commission_paid).length;
+  const pendingBrokerAmount = brokerBookings.filter(b => !b.broker_commission_paid).reduce((s, b) => s + Number(b.broker_commission), 0);
+  const totalOutflow = brokerBookings.filter(b => b.broker_commission_paid).reduce((s, b) => s + Number(b.broker_commission), 0) + ownerPayouts.reduce((s, p) => s + Number(p.amount), 0);
+
+  const filteredHistory = historyOwnerFilter === "all"
+    ? ownerPayouts
+    : ownerPayouts.filter(p => p.owner_id === historyOwnerFilter);
 
   const pad = isMobile ? "16px" : "32px";
   const gap = isMobile ? "14px" : "24px";
@@ -119,8 +176,14 @@ export default function Payouts({ isMobile }) {
           <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>Partner commissions &amp; owner profit distribution</p>
         </div>
 
-        {/* Date filter */}
+        {/* Broker search + Date filter */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <input
+            placeholder="Search broker / guest..."
+            value={brokerSearch}
+            onChange={(e) => setBrokerSearch(e.target.value)}
+            style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", padding: "8px 14px", color: "#e0e0e0", fontSize: "13px", outline: "none", width: isMobile ? "100%" : "190px", boxSizing: "border-box" }}
+          />
           <div style={{ position: "relative" }}>
             <select
               value={dateFilter}
@@ -159,6 +222,59 @@ export default function Payouts({ isMobile }) {
             </button>
           )}
         </div>
+      </div>
+
+      {/* ── PENDING BROKER ALERT ── */}
+      {pendingBrokerCount > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 16px", background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: "10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "18px" }}>⚠</span>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: "13px", fontWeight: "600", color: "#f59e0b" }}>{pendingBrokerCount} broker payout{pendingBrokerCount > 1 ? "s" : ""} pending</p>
+            <p style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}>{fmt(pendingBrokerAmount)} baaki hai — neeche Partner Payouts mein mark karo</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── COMBINED OVERVIEW ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: isMobile ? "10px" : "14px" }}>
+        {[
+          {
+            label: "Broker — Paid",
+            value: fmt(brokerBookings.filter(b => b.broker_commission_paid).reduce((s, b) => s + Number(b.broker_commission), 0)),
+            color: "#34d399",
+            sub: `${brokerBookings.filter(b => b.broker_commission_paid).length} payouts`,
+          },
+          {
+            label: "Broker — Pending",
+            value: fmt(pendingBrokerAmount),
+            color: pendingBrokerCount > 0 ? "#f59e0b" : "#555",
+            sub: `${pendingBrokerCount} pending`,
+          },
+          {
+            label: "Owner — Paid Out",
+            value: fmt(ownerPayouts.reduce((s, p) => s + Number(p.amount), 0)),
+            color: "#33b5b5",
+            sub: `${ownerPayouts.length} records`,
+          },
+          {
+            label: "Owner — Remaining",
+            value: isProfit ? fmt(Math.max(0, profit - ownerPayouts.reduce((s, p) => s + Number(p.amount), 0))) : "—",
+            color: "#8b5cf6",
+            sub: isProfit ? "yet to withdraw" : "loss period",
+          },
+          {
+            label: "Total Outflow",
+            value: fmt(totalOutflow),
+            color: "#ef4444",
+            sub: "broker + owner paid",
+          },
+        ].map((s) => (
+          <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "16px 20px" }}>
+            <p style={{ fontSize: "10px", color: "#555", fontWeight: "600", letterSpacing: "0.05em", marginBottom: "5px" }}>{s.label.toUpperCase()}</p>
+            <p style={{ fontSize: isMobile ? "18px" : "20px", fontWeight: "800", color: s.color }}>{s.value}</p>
+            <p style={{ fontSize: "10px", color: "#444", marginTop: "3px" }}>{s.sub}</p>
+          </div>
+        ))}
       </div>
 
       {/* ── PARTNER PAYOUTS ── */}
@@ -262,10 +378,57 @@ export default function Payouts({ isMobile }) {
         )}
       </div>
 
+      {/* ── PER-BROKER SUMMARY ── */}
+      {brokerSummary.length > 0 && (
+        <div>
+          <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.08em", marginBottom: "14px" }}>BROKER SUMMARY</p>
+          <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", overflow: "hidden" }}>
+            {brokerSummary.map(([name, data], i) => (
+              <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 16px" : "14px 20px", borderBottom: i < brokerSummary.length - 1 ? "1px solid #161616" : "none", gap: "12px", flexWrap: "wrap" }}>
+                <div>
+                  <p style={{ fontSize: "14px", fontWeight: "600", color: "#e0e0e0" }}>{name}</p>
+                  <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>{data.phone || "—"} · {data.count} booking{data.count > 1 ? "s" : ""}</p>
+                </div>
+                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
+                  <div style={{ textAlign: "right" }}>
+                    <p style={{ fontSize: "10px", color: "#444" }}>Total</p>
+                    <p style={{ fontSize: "14px", fontWeight: "700", color: "#e0e0e0" }}>{fmt(data.total)}</p>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <p style={{ fontSize: "10px", color: "#444" }}>Paid</p>
+                    <p style={{ fontSize: "14px", fontWeight: "700", color: "#34d399" }}>{fmt(data.paid)}</p>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <p style={{ fontSize: "10px", color: "#444" }}>Pending</p>
+                    <p style={{ fontSize: "14px", fontWeight: "700", color: data.pending > 0 ? "#f59e0b" : "#555" }}>{fmt(data.pending)}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── OWNER PAYOUT ── */}
       {owners.length > 0 && (
         <div>
           <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.08em", marginBottom: "14px" }}>OWNER PAYOUT</p>
+
+          {/* ── Top total summary ── */}
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? "10px" : "14px", marginBottom: isMobile ? "14px" : "20px" }}>
+            {[
+              { label: "Total Profit", value: fmt(Math.abs(profit)), color: isProfit ? "#34d399" : "#f87171", sub: isProfit ? "Available to distribute" : "Net loss this period" },
+              { label: "Total Paid Out", value: fmt(ownerPayouts.reduce((s, p) => s + Number(p.amount), 0)), color: "#33b5b5", sub: "Across all owners" },
+              { label: isProfit ? "Still Remaining" : "—", value: isProfit ? fmt(Math.max(0, profit - ownerPayouts.reduce((s, p) => s + Number(p.amount), 0))) : "—", color: "#f59e0b", sub: isProfit ? "Yet to be paid out" : "" },
+            ].map((s) => (
+              <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px" }}>
+                <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", letterSpacing: "0.05em", marginBottom: "5px" }}>{s.label}</p>
+                <p style={{ fontSize: isMobile ? "20px" : "24px", fontWeight: "800", color: s.color }}>{s.value}</p>
+                <p style={{ fontSize: "10px", color: "#444", marginTop: "3px" }}>{s.sub}</p>
+              </div>
+            ))}
+          </div>
+
           <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "16px" : "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
 
             {/* Revenue / Expenses / Profit strip */}
@@ -282,6 +445,31 @@ export default function Payouts({ isMobile }) {
               ))}
             </div>
 
+            {/* Expense breakdown */}
+            <div style={{ background: "#1a1a1a", borderRadius: "10px", padding: "14px 16px" }}>
+              <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.07em", marginBottom: "10px" }}>EXPENSE BREAKDOWN</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "#666" }}>Regular Expenses</span>
+                  <span style={{ color: "#ccc", fontWeight: "600" }}>{fmt(regularExpenses)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "#666" }}>Maintenance</span>
+                  <span style={{ color: "#f97316", fontWeight: "600" }}>{fmt(maintenanceExpenses)}</span>
+                </div>
+                {brokerPaidTotal > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#666" }}>Broker Commissions</span>
+                    <span style={{ color: "#f59e0b", fontWeight: "600" }}>{fmt(brokerPaidTotal)}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #2a2a2a", paddingTop: "6px", fontWeight: "700" }}>
+                  <span style={{ color: "#888" }}>Total</span>
+                  <span style={{ color: "#ef4444" }}>{fmt(totalExpenses + brokerPaidTotal)}</span>
+                </div>
+              </div>
+            </div>
+
             {/* Broker deduction note */}
             {brokerPaidTotal > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "8px 12px", background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.15)", borderRadius: "8px" }}>
@@ -295,33 +483,114 @@ export default function Payouts({ isMobile }) {
               </div>
             )}
 
+            {/* Owner summary tiles */}
+            {isProfit && (
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : `repeat(${Math.min(owners.length + 1, 4)}, 1fr)`, gap: isMobile ? "10px" : "14px" }}>
+                <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "10px", padding: isMobile ? "12px" : "14px 16px" }}>
+                  <p style={{ fontSize: "10px", color: "#555", marginBottom: "5px", fontWeight: "600" }}>TOTAL POOL</p>
+                  <p style={{ fontSize: isMobile ? "17px" : "20px", fontWeight: "800", color: "#34d399" }}>{fmt(profit)}</p>
+                  <p style={{ fontSize: "10px", color: "#444", marginTop: "3px" }}>Total paid: {fmt(ownerPayouts.reduce((s, p) => s + Number(p.amount), 0))}</p>
+                </div>
+                {owners.map((o, i) => {
+                  const share = profit * (Number(o.ownership_percent) / 100);
+                  const paidOut = ownerPayouts.filter(p => p.owner_id === o.id).reduce((s, p) => s + Number(p.amount), 0);
+                  const remaining = share - paidOut;
+                  const color = o.color || COLORS[i % COLORS.length];
+                  const initials = o.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+                  return (
+                    <div key={o.id} style={{ background: "#1a1a1a", border: `1px solid ${color}22`, borderRadius: "10px", padding: isMobile ? "12px" : "14px 16px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "6px" }}>
+                        <div style={{ width: "20px", height: "20px", borderRadius: "5px", background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: "700", color, overflow: "hidden", flexShrink: 0 }}>
+                          {o.image_url ? <img src={o.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
+                        </div>
+                        <p style={{ fontSize: "11px", color: "#888", fontWeight: "600" }}>{o.name.split(" ")[0].toUpperCase()}</p>
+                      </div>
+                      <p style={{ fontSize: isMobile ? "17px" : "20px", fontWeight: "800", color }}>{fmt(paidOut)}</p>
+                      <p style={{ fontSize: "10px", color: remaining > 0 ? "#f59e0b" : "#555", marginTop: "3px" }}>
+                        {remaining > 0 ? `${fmt(remaining)} left` : "Settled"}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Per-owner rows */}
             <div>
               <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.08em", marginBottom: "10px" }}>
                 DISTRIBUTION ({isProfit ? "PROFIT" : "LOSS"})
               </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {owners.map((o, i) => {
-                  const payout = profit * (Number(o.ownership_percent) / 100);
+                  const share = profit * (Number(o.ownership_percent) / 100);
+                  const paidOut = ownerPayouts.filter(p => p.owner_id === o.id).reduce((s, p) => s + Number(p.amount), 0);
+                  const remaining = share - paidOut;
+                  const isOverpaid = isProfit && paidOut > share;
+                  const pct = isProfit && share > 0 ? Math.min(100, (paidOut / share) * 100) : 0;
                   const color = o.color || COLORS[i % COLORS.length];
                   const initials = o.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
                   return (
-                    <div key={o.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "#1a1a1a", borderRadius: "10px", border: `1px solid ${color}18` }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <div style={{ width: "34px", height: "34px", borderRadius: "8px", background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: "700", color, overflow: "hidden", flexShrink: 0 }}>
-                          {o.image_url ? <img src={o.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
+                    <div key={o.id} style={{ background: "#1a1a1a", borderRadius: "10px", border: `1px solid ${color}22`, padding: "14px" }}>
+                      {/* Top row */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: isProfit ? "12px" : "0" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <div style={{ width: "34px", height: "34px", borderRadius: "8px", background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: "700", color, overflow: "hidden", flexShrink: 0 }}>
+                            {o.image_url ? <img src={o.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
+                          </div>
+                          <div>
+                            <p style={{ fontSize: "14px", fontWeight: "600", color: "#e0e0e0" }}>{o.name}</p>
+                            <p style={{ fontSize: "11px", color: "#555" }}>
+                              {Number(o.ownership_percent).toFixed(2)}% ·{" "}
+                              {isProfit
+                                ? <span>Share: <span style={{ color: "#34d399", fontWeight: "700" }}>+{fmt(share)}</span></span>
+                                : <span>Loss Share: <span style={{ color: "#f87171", fontWeight: "700" }}>−{fmt(Math.abs(share))}</span></span>
+                              }
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <p style={{ fontSize: "14px", fontWeight: "600", color: "#e0e0e0" }}>{o.name}</p>
-                          <p style={{ fontSize: "11px", color: "#555" }}>{Number(o.ownership_percent).toFixed(2)}% ownership</p>
-                        </div>
+                        {isProfit && (
+                          <button
+                            onClick={() => { setPayoutModal(true); setPayoutForm(f => ({ ...f, owner_id: o.id, amount: remaining > 0 ? String(Math.round(remaining)) : "" })); }}
+                            style={{ display: "flex", alignItems: "center", gap: "5px", padding: "5px 10px", background: "rgba(0,128,128,0.12)", border: "1px solid rgba(0,128,128,0.3)", borderRadius: "7px", color: "#33b5b5", fontSize: "11px", fontWeight: "600", cursor: "pointer", flexShrink: 0 }}>
+                            <Plus size={12} /> Payout
+                          </button>
+                        )}
                       </div>
-                      <div style={{ textAlign: "right" }}>
-                        <p style={{ fontSize: "16px", fontWeight: "800", color: isProfit ? "#34d399" : "#f87171" }}>
-                          {isProfit ? "+" : "-"}{fmt(Math.abs(payout))}
-                        </p>
-                        <p style={{ fontSize: "11px", color: "#444", marginTop: "2px" }}>{isProfit ? "payout" : "share of loss"}</p>
-                      </div>
+
+                      {/* Profit scenario: show progress + stats */}
+                      {isProfit && (
+                        <>
+                          <div style={{ marginBottom: "10px" }}>
+                            <div style={{ background: "#111", borderRadius: "4px", height: "5px", overflow: "hidden" }}>
+                              <div style={{ width: pct + "%", height: "100%", background: isOverpaid ? "#ef4444" : color, borderRadius: "4px", transition: "width 0.3s" }} />
+                            </div>
+                            <p style={{ fontSize: "10px", color: "#444", marginTop: "3px" }}>{Math.round(pct)}% paid out</p>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+                            <div style={{ background: "#111", borderRadius: "7px", padding: "8px 10px" }}>
+                              <p style={{ fontSize: "10px", color: "#444", marginBottom: "3px" }}>Paid Out</p>
+                              <p style={{ fontSize: "13px", fontWeight: "700", color: "#34d399" }}>{fmt(paidOut)}</p>
+                            </div>
+                            <div style={{ background: "#111", borderRadius: "7px", padding: "8px 10px" }}>
+                              <p style={{ fontSize: "10px", color: "#444", marginBottom: "3px" }}>Remaining</p>
+                              <p style={{ fontSize: "13px", fontWeight: "700", color: remaining > 0 ? "#f59e0b" : "#555" }}>
+                                {remaining > 0 ? fmt(remaining) : "—"}
+                              </p>
+                            </div>
+                            <div style={{ background: "#111", borderRadius: "7px", padding: "8px 10px" }}>
+                              <p style={{ fontSize: "10px", color: "#444", marginBottom: "3px" }}>Status</p>
+                              <p style={{ fontSize: "11px", fontWeight: "700", color: isOverpaid ? "#ef4444" : remaining <= 0 ? "#34d399" : paidOut > 0 ? "#f59e0b" : "#555" }}>
+                                {isOverpaid ? "Overpaid" : remaining <= 0 ? "Settled" : paidOut > 0 ? "Partial" : "Pending"}
+                              </p>
+                            </div>
+                          </div>
+                          {isOverpaid && (
+                            <p style={{ fontSize: "11px", color: "#ef4444", marginTop: "8px" }}>
+                              ⚠ Overpaid by {fmt(paidOut - share)} — adjust in next cycle
+                            </p>
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                 })}
@@ -329,6 +598,177 @@ export default function Payouts({ isMobile }) {
               {profit === 0 && (
                 <p style={{ fontSize: "13px", color: "#444", textAlign: "center", marginTop: "12px" }}>Revenue equals expenses — no profit or loss.</p>
               )}
+            </div>
+
+            {/* Payout History */}
+            {ownerPayouts.length > 0 && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
+                  <p style={{ fontSize: "11px", color: "#444", fontWeight: "600", letterSpacing: "0.08em" }}>PAYOUT HISTORY</p>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {[{ id: "all", label: "All" }, ...owners.map(o => ({ id: o.id, label: o.name.split(" ")[0] }))].map(opt => (
+                      <button key={opt.id} onClick={() => setHistoryOwnerFilter(opt.id)}
+                        style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "11px", fontWeight: "600", cursor: "pointer", border: "1px solid", borderColor: historyOwnerFilter === opt.id ? "rgba(51,181,181,0.5)" : "#2a2a2a", background: historyOwnerFilter === opt.id ? "rgba(51,181,181,0.12)" : "transparent", color: historyOwnerFilter === opt.id ? "#33b5b5" : "#555" }}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {[...filteredHistory].sort((a, b) => b.date.localeCompare(a.date)).map((p) => {
+                    const o = owners.find(ow => ow.id === p.owner_id);
+                    return (
+                      <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "#1a1a1a", borderRadius: "8px", gap: "10px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <div style={{ width: "28px", height: "28px", borderRadius: "6px", background: (o?.color || "#555") + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: o?.color || "#ccc" }}>
+                            {o?.name?.[0] || "?"}
+                          </div>
+                          <div>
+                            <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>{o?.name || "Unknown"}</p>
+                            <p style={{ fontSize: "11px", color: "#555" }}>{p.date?.split("-").reverse().join("/")} · {p.method}{p.notes ? ` · ${p.notes}` : ""}</p>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                          <span style={{ fontSize: "15px", fontWeight: "700", color: "#34d399" }}>{fmt(p.amount)}</span>
+                          <button onClick={() => { setEditPayoutId(p.id); setEditPayoutForm({ amount: String(p.amount), date: p.date, method: p.method || "Cash", notes: p.notes || "" }); }}
+                            style={{ background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", color: "#818cf8", borderRadius: "6px", padding: "4px 8px", cursor: "pointer", fontSize: "11px", display: "flex", alignItems: "center", gap: "3px" }}>
+                            <Pencil size={11} /> Edit
+                          </button>
+                          <button onClick={() => setDeletePayoutId(p.id)} style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", color: "#ef4444", borderRadius: "6px", padding: "4px 8px", cursor: "pointer", fontSize: "11px", display: "flex", alignItems: "center", gap: "3px" }}>
+                            <Trash2 size={11} /> Del
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", marginTop: "4px", background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.15)", borderRadius: "8px" }}>
+                  <span style={{ fontSize: "13px", color: "#888" }}>
+                    {historyOwnerFilter === "all" ? "Total Paid Out" : `${owners.find(o => o.id === historyOwnerFilter)?.name} — Total`}
+                  </span>
+                  <span style={{ fontSize: "14px", fontWeight: "700", color: "#34d399" }}>{fmt(filteredHistory.reduce((s, p) => s + Number(p.amount), 0))}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Record Payout Modal */}
+      {payoutModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 }}>
+          <div style={{ background: "#111", border: "1px solid #222", borderRadius: isMobile ? "16px 16px 0 0" : "16px", padding: "24px", width: "100%", maxWidth: isMobile ? "100%" : "420px", position: isMobile ? "fixed" : "relative", bottom: isMobile ? 0 : "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+              <h2 style={{ fontSize: "17px", fontWeight: "600", color: "#f0f0f0" }}>Record Owner Payout</h2>
+              <button onClick={() => setPayoutModal(false)} style={{ background: "none", border: "none", color: "#555", cursor: "pointer" }}><X size={18} /></button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div>
+                <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Owner</label>
+                <select value={payoutForm.owner_id} onChange={(e) => setPayoutForm(f => ({ ...f, owner_id: e.target.value }))}
+                  style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}>
+                  <option value="">Select owner...</option>
+                  {owners.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: "12px" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Amount (₹)</label>
+                  <input type="number" value={payoutForm.amount} onChange={(e) => setPayoutForm(f => ({ ...f, amount: e.target.value }))} placeholder="0"
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Date</label>
+                  <input type="date" value={payoutForm.date} onChange={(e) => setPayoutForm(f => ({ ...f, date: e.target.value }))}
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "12px" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Method</label>
+                  <select value={payoutForm.method} onChange={(e) => setPayoutForm(f => ({ ...f, method: e.target.value }))}
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}>
+                    {["Cash", "UPI", "Bank Transfer", "Other"].map(m => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Notes</label>
+                  <input value={payoutForm.notes} onChange={(e) => setPayoutForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional..."
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", boxSizing: "border-box" }} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "4px" }}>
+                <button onClick={() => setPayoutModal(false)} style={{ padding: "10px 18px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", color: "#888", cursor: "pointer", fontSize: "14px" }}>Cancel</button>
+                <button onClick={handleAddPayout} disabled={payoutSaving || !payoutForm.owner_id || !payoutForm.amount}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "10px 20px", background: "linear-gradient(135deg,#008080,#00a0a0)", border: "none", borderRadius: "8px", color: "#fff", fontWeight: "600", fontSize: "14px", cursor: "pointer", opacity: (!payoutForm.owner_id || !payoutForm.amount) ? 0.5 : 1 }}>
+                  <Check size={15} />{payoutSaving ? "Saving..." : "Record Payout"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Payout Confirm */}
+      {/* Edit Payout Modal */}
+      {editPayoutId && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: "16px" }}>
+          <div style={{ background: "#111", border: "1px solid #222", borderRadius: "16px", padding: "24px", width: "100%", maxWidth: "400px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+              <h2 style={{ fontSize: "17px", fontWeight: "600", color: "#f0f0f0" }}>Edit Payout</h2>
+              <button onClick={() => setEditPayoutId(null)} style={{ background: "none", border: "none", color: "#555", cursor: "pointer" }}><X size={18} /></button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div style={{ display: "flex", gap: "12px" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Amount (₹)</label>
+                  <input type="number" value={editPayoutForm.amount} onChange={(e) => setEditPayoutForm(f => ({ ...f, amount: e.target.value }))}
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Date</label>
+                  <input type="date" value={editPayoutForm.date} onChange={(e) => setEditPayoutForm(f => ({ ...f, date: e.target.value }))}
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "12px" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Method</label>
+                  <select value={editPayoutForm.method} onChange={(e) => setEditPayoutForm(f => ({ ...f, method: e.target.value }))}
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}>
+                    {["Cash", "UPI", "Bank Transfer", "Other"].map(m => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "12px", color: "#777", display: "block", marginBottom: "6px" }}>Notes</label>
+                  <input value={editPayoutForm.notes} onChange={(e) => setEditPayoutForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional..."
+                    style={{ width: "100%", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "7px", padding: "10px 12px", color: "#e0e0e0", fontSize: "14px", outline: "none", boxSizing: "border-box" }} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "4px" }}>
+                <button onClick={() => setEditPayoutId(null)} style={{ padding: "10px 18px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", color: "#888", cursor: "pointer", fontSize: "14px" }}>Cancel</button>
+                <button onClick={handleEditPayout} disabled={editPayoutSaving || !editPayoutForm.amount}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "10px 20px", background: "linear-gradient(135deg,#6366f1,#818cf8)", border: "none", borderRadius: "8px", color: "#fff", fontWeight: "600", fontSize: "14px", cursor: "pointer", opacity: !editPayoutForm.amount ? 0.5 : 1 }}>
+                  <Check size={15} />{editPayoutSaving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Payout Confirm */}
+      {deletePayoutId && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div style={{ background: "#111", border: "1px solid #222", borderRadius: "14px", padding: "24px", maxWidth: "340px", width: "90%" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: "600", color: "#f0f0f0", marginBottom: "10px" }}>Delete Payout Record?</h2>
+            <p style={{ color: "#888", fontSize: "13px", marginBottom: "20px" }}>This cannot be undone.</p>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button onClick={() => setDeletePayoutId(null)} style={{ padding: "9px 16px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: "8px", color: "#888", cursor: "pointer", fontSize: "13px" }}>Cancel</button>
+              <button onClick={async () => { await deleteOwnerPayout(deletePayoutId); setDeletePayoutId(null); }}
+                style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 16px", background: "#ef4444", border: "none", borderRadius: "8px", color: "#fff", fontWeight: "600", fontSize: "13px", cursor: "pointer" }}>
+                <Trash2 size={14} /> Delete
+              </button>
             </div>
           </div>
         </div>

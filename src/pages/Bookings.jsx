@@ -8,6 +8,7 @@ import {
   FileText,
   MessageCircle,
   LayoutList,
+  CalendarDays,
   Upload,
   RefreshCw,
   ChevronDown,
@@ -119,6 +120,13 @@ export default function Bookings({ isMobile }) {
   const [promoSelected, setPromoSelected] = useState("");
   const [promoApplying, setPromoApplying] = useState(false);
   const [brokerPayId, setBrokerPayId] = useState(null); // booking id being marked
+
+  // View mode: list or calendar
+  const [viewMode, setViewMode] = useState("list");
+  const [calMonth, setCalMonth] = useState(new Date());
+
+  // Expanded booking detail (for guest history + WA actions)
+  const [expandedId, setExpandedId] = useState(null);
 
   const calcRoomCost = (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return 0;
@@ -318,6 +326,7 @@ export default function Bookings({ isMobile }) {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -360,6 +369,8 @@ export default function Bookings({ isMobile }) {
     )
       return false;
     if (statusFilter !== "all" && b.status !== statusFilter) return false;
+    if (sourceFilter === "broker" && !b.broker_name) return false;
+    if (sourceFilter === "direct" && b.broker_name) return false;
     const d = b.created_at ? b.created_at.slice(0, 10) : "";
     if (dateRange.from && d < dateRange.from) return false;
     if (dateRange.to && d > dateRange.to) return false;
@@ -367,7 +378,23 @@ export default function Bookings({ isMobile }) {
   });
 
   const isFiltered =
-    search.trim() || statusFilter !== "all" || dateFilter !== "all";
+    search.trim() || statusFilter !== "all" || sourceFilter !== "all" || dateFilter !== "all";
+
+  // ── Stats ──
+  const todayStr = new Date().toISOString().split("T")[0];
+  const tomorrowStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })();
+  const totalRevenue = payments.reduce((s, p) => s + (p.amount || 0), 0);
+  const totalPendingBalance = bookings
+    .filter((b) => b.status !== "cancelled" && b.status !== "checked-out")
+    .reduce((s, b) => {
+      const fin = getBookingFinancials(b);
+      return s + Math.max(0, fin.balance);
+    }, 0);
+  const checkedInCount = bookings.filter((b) => b.status === "checked-in").length;
+
+  // ── Returning guests (same phone, 2+ bookings) ──
+  const phoneCounts = {};
+  bookings.forEach((b) => { if (b.phone) phoneCounts[b.phone] = (phoneCounts[b.phone] || 0) + 1; });
 
   const pad = isMobile ? "16px" : "32px";
   const gap = isMobile ? "14px" : "24px";
@@ -588,6 +615,43 @@ export default function Bookings({ isMobile }) {
             flexWrap: "wrap",
           }}
         >
+          {/* View Toggle */}
+          <button
+            onClick={() =>
+              setViewMode(viewMode === "list" ? "calendar" : "list")
+            }
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              background:
+                viewMode === "calendar" ? "rgba(51,181,181,0.15)" : "#1a1a1a",
+              border:
+                viewMode === "calendar"
+                  ? "1px solid rgba(51,181,181,0.4)"
+                  : "1px solid #2a2a2a",
+              borderRadius: "8px",
+              color: viewMode === "calendar" ? "#33b5b5" : "#666",
+              fontWeight: "600",
+              fontSize: "13px",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+            title={
+              viewMode === "list"
+                ? "Switch to Calendar View"
+                : "Switch to List View"
+            }
+          >
+            {viewMode === "list" ? (
+              <CalendarDays size={15} />
+            ) : (
+              <LayoutList size={15} />
+            )}
+            {viewMode === "list" ? "Calendar" : "List"}
+          </button>
+
           {/* Create Booking */}
           <button
             onClick={() => setShowCreate(true)}
@@ -666,6 +730,33 @@ export default function Bookings({ isMobile }) {
                 pointerEvents: "none",
               }}
             />
+          </div>
+
+          {/* Source filter dropdown */}
+          <div style={{ position: "relative" }}>
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              style={{
+                appearance: "none",
+                WebkitAppearance: "none",
+                background: "#111",
+                border: "1px solid #2a2a2a",
+                borderRadius: "8px",
+                padding: "8px 32px 8px 12px",
+                color: sourceFilter === "all" ? "#555" : "#33b5b5",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                outline: "none",
+                colorScheme: "dark",
+              }}
+            >
+              <option value="all">All Sources</option>
+              <option value="direct">Direct</option>
+              <option value="broker">Broker</option>
+            </select>
+            <ChevronDown size={13} color="#555" style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
           </div>
 
           {/* Date filter dropdown */}
@@ -788,6 +879,23 @@ export default function Bookings({ isMobile }) {
         </div>
       </div>
 
+      {/* ── QUICK STATS ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? "10px" : "14px" }}>
+        {[
+          { label: "Total Bookings", value: bookings.length, color: "#33b5b5" },
+          { label: "Upcoming", value: bookings.filter(b => b.status === "pending" || b.status === "confirmed").length, color: "#06b6d4" },
+          { label: "Checked In", value: checkedInCount, color: "#10b981" },
+          { label: "Cancelled", value: bookings.filter(b => b.status === "cancelled").length, color: "#ef4444" },
+          { label: "Revenue Collected", value: "₹" + Number(totalRevenue).toLocaleString("en-IN"), color: "#008080" },
+          { label: "Pending Balance", value: "₹" + Number(totalPendingBalance).toLocaleString("en-IN"), color: "#f59e0b" },
+        ].map((s) => (
+          <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "10px", padding: isMobile ? "12px 14px" : "14px 18px" }}>
+            <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", letterSpacing: "0.05em", marginBottom: "5px" }}>{s.label}</p>
+            <p style={{ fontSize: isMobile ? "17px" : "20px", fontWeight: "800", color: s.color }}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
       {bookingsLoading && (
         <div
           style={{
@@ -814,10 +922,337 @@ export default function Bookings({ isMobile }) {
         </div>
       )}
 
+      {/* ── Calendar View ── */}
+      {!bookingsLoading &&
+        viewMode === "calendar" &&
+        (() => {
+          const year = calMonth.getFullYear();
+          const month = calMonth.getMonth();
+          const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+          const daysInMonth = new Date(year, month + 1, 0).getDate();
+          const monthLabel = calMonth.toLocaleString("en-IN", {
+            month: "long",
+            year: "numeric",
+          });
+
+          // Build array of day cells (nulls for padding)
+          const cells = [];
+          for (let i = 0; i < firstDay; i++) cells.push(null);
+          for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+          const todayStr = new Date().toISOString().split("T")[0];
+
+          // For each day, find bookings that include it
+          const bookingsForDay = (day) => {
+            if (!day) return [];
+            const dayStr = `${year}-${String(month + 1).padStart(
+              2,
+              "0"
+            )}-${String(day).padStart(2, "0")}`;
+            return bookings.filter((b) => {
+              if (!b.check_in || !b.check_out) return false;
+              return b.check_in <= dayStr && b.check_out > dayStr;
+            });
+          };
+
+          return (
+            <div
+              style={{
+                background: "#111",
+                border: "1px solid #1e1e1e",
+                borderRadius: "14px",
+                overflow: "hidden",
+              }}
+            >
+              {/* Calendar Header */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "16px 20px",
+                  borderBottom: "1px solid #1a1a1a",
+                }}
+              >
+                <button
+                  onClick={() => {
+                    const d = new Date(calMonth);
+                    d.setMonth(d.getMonth() - 1);
+                    setCalMonth(d);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "1px solid #2a2a2a",
+                    borderRadius: "6px",
+                    color: "#888",
+                    cursor: "pointer",
+                    padding: "5px 10px",
+                    fontSize: "14px",
+                  }}
+                >
+                  ‹
+                </button>
+                <span
+                  style={{
+                    fontWeight: "700",
+                    color: "#e0e0e0",
+                    fontSize: "15px",
+                  }}
+                >
+                  {monthLabel}
+                </span>
+                <button
+                  onClick={() => {
+                    const d = new Date(calMonth);
+                    d.setMonth(d.getMonth() + 1);
+                    setCalMonth(d);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "1px solid #2a2a2a",
+                    borderRadius: "6px",
+                    color: "#888",
+                    cursor: "pointer",
+                    padding: "5px 10px",
+                    fontSize: "14px",
+                  }}
+                >
+                  ›
+                </button>
+              </div>
+
+              {/* Day headers */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(7, 1fr)",
+                  borderBottom: "1px solid #1a1a1a",
+                }}
+              >
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                  <div
+                    key={d}
+                    style={{
+                      padding: "8px 4px",
+                      textAlign: "center",
+                      fontSize: "11px",
+                      fontWeight: "600",
+                      color: "#444",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    {d}
+                  </div>
+                ))}
+              </div>
+
+              {/* Day cells */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(7, 1fr)",
+                }}
+              >
+                {cells.map((day, idx) => {
+                  const dayStr = day
+                    ? `${year}-${String(month + 1).padStart(2, "0")}-${String(
+                        day
+                      ).padStart(2, "0")}`
+                    : null;
+                  const isToday = dayStr === todayStr;
+                  const dayBookings = bookingsForDay(day);
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        minHeight: "72px",
+                        borderRight:
+                          (idx + 1) % 7 !== 0 ? "1px solid #1a1a1a" : "none",
+                        borderBottom:
+                          idx < cells.length - 7 ? "1px solid #1a1a1a" : "none",
+                        padding: "6px 4px",
+                        background: !day ? "#0d0d0d" : "transparent",
+                      }}
+                    >
+                      {day && (
+                        <>
+                          <div
+                            style={{
+                              fontSize: "12px",
+                              fontWeight: isToday ? "800" : "500",
+                              color: isToday ? "#33b5b5" : "#555",
+                              marginBottom: "4px",
+                              textAlign: "center",
+                            }}
+                          >
+                            {day}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "2px",
+                            }}
+                          >
+                            {dayBookings.slice(0, 3).map((b) => {
+                              const sc =
+                                STATUS_COLORS[b.status] ||
+                                STATUS_COLORS.pending;
+                              return (
+                                <div
+                                  key={b.id}
+                                  onClick={() =>
+                                    setExpandedId(
+                                      expandedId === b.id ? null : b.id
+                                    )
+                                  }
+                                  title={`${b.name} · ${b.status}`}
+                                  style={{
+                                    fontSize: "10px",
+                                    fontWeight: "600",
+                                    color: sc.color,
+                                    background: sc.bg,
+                                    border: `1px solid ${sc.border}`,
+                                    borderRadius: "3px",
+                                    padding: "1px 4px",
+                                    cursor: "pointer",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {b.name?.split(" ")[0] || "Guest"}
+                                </div>
+                              );
+                            })}
+                            {dayBookings.length > 3 && (
+                              <div
+                                style={{
+                                  fontSize: "9px",
+                                  color: "#444",
+                                  paddingLeft: "2px",
+                                }}
+                              >
+                                +{dayBookings.length - 3} more
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Expanded booking detail from calendar click */}
+              {expandedId &&
+                (() => {
+                  const b = bookings.find((bk) => bk.id === expandedId);
+                  if (!b) return null;
+                  const s = STATUS_COLORS[b.status] || STATUS_COLORS.pending;
+                  return (
+                    <div
+                      style={{
+                        borderTop: "1px solid #1a1a1a",
+                        padding: "16px 20px",
+                        background: "#0d0d0d",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          marginBottom: "10px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: "32px",
+                              height: "32px",
+                              borderRadius: "8px",
+                              background:
+                                "linear-gradient(135deg,#008080,#00a0a0)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontWeight: "700",
+                              color: "#fff",
+                            }}
+                          >
+                            {b.name?.[0]?.toUpperCase() || "?"}
+                          </div>
+                          <div>
+                            <p
+                              style={{
+                                fontWeight: "700",
+                                color: "#f0f0f0",
+                                fontSize: "14px",
+                              }}
+                            >
+                              {b.name}
+                            </p>
+                            <p style={{ fontSize: "12px", color: "#555" }}>
+                              {b.phone} · {fmt(b.check_in)} → {fmt(b.check_out)}
+                            </p>
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: "600",
+                              padding: "3px 10px",
+                              borderRadius: "20px",
+                              background: s.bg,
+                              border: `1px solid ${s.border}`,
+                              color: s.color,
+                            }}
+                          >
+                            {b.status}
+                          </span>
+                          <button
+                            onClick={() => setExpandedId(null)}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: "#555",
+                              cursor: "pointer",
+                              display: "flex",
+                            }}
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+            </div>
+          );
+        })()}
+
       {/* Booking Cards */}
       {!bookingsLoading &&
+        viewMode === "list" &&
         filteredBookings.map((b) => {
           const s = STATUS_COLORS[b.status] || STATUS_COLORS.pending;
+          const isReturning = (phoneCounts[b.phone] || 0) > 1;
+          const checkoutToday = b.check_out === todayStr;
+          const checkoutTomorrow = b.check_out === tomorrowStr;
           const totalAddonCost = (b.addons || []).reduce(
             (sum, a) => sum + (a.price || 0),
             0
@@ -831,11 +1266,29 @@ export default function Bookings({ isMobile }) {
               key={b.id}
               style={{
                 background: "#111",
-                border: "1px solid #1e1e1e",
+                border: checkoutToday
+                  ? "1px solid rgba(239,68,68,0.4)"
+                  : checkoutTomorrow
+                  ? "1px solid rgba(245,158,11,0.3)"
+                  : "1px solid #1e1e1e",
                 borderRadius: "14px",
                 overflow: "hidden",
               }}
             >
+              {/* Checkout alert banner */}
+              {(checkoutToday || checkoutTomorrow) && (
+                <div style={{
+                  background: checkoutToday ? "rgba(239,68,68,0.08)" : "rgba(245,158,11,0.06)",
+                  borderBottom: checkoutToday ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(245,158,11,0.2)",
+                  padding: "6px 16px",
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  color: checkoutToday ? "#ef4444" : "#f59e0b",
+                  letterSpacing: "0.05em",
+                }}>
+                  {checkoutToday ? "⚠ CHECKING OUT TODAY" : "CHECK-OUT TOMORROW"}
+                </div>
+              )}
               {/* Card Header */}
               <div
                 style={{
@@ -909,6 +1362,16 @@ export default function Bookings({ isMobile }) {
                           ? "Docs ✓"
                           : "Docs Pending"}
                       </span>
+                      {isReturning && (
+                        <span style={{ fontSize: "10px", fontWeight: "700", padding: "2px 8px", borderRadius: "20px", background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.3)", color: "#8b5cf6" }}>
+                          Returning
+                        </span>
+                      )}
+                      {b.broker_name && (
+                        <span style={{ fontSize: "10px", fontWeight: "600", padding: "2px 8px", borderRadius: "20px", background: "rgba(6,182,212,0.1)", border: "1px solid rgba(6,182,212,0.3)", color: "#06b6d4" }}>
+                          via {b.broker_name}
+                        </span>
+                      )}
                       {b.discount > 0 && (
                         <span
                           style={{
@@ -1688,10 +2151,7 @@ export default function Bookings({ isMobile }) {
                                 <button
                                   onClick={async () => {
                                     setBrokerPayId(b.id);
-                                    await markBrokerCommissionPaid(
-                                      b.id,
-                                      !b.broker_commission_paid
-                                    );
+                                    await markBrokerCommissionPaid(b.id, !b.broker_commission_paid);
                                     setBrokerPayId(null);
                                   }}
                                   disabled={brokerPayId === b.id}
@@ -1939,6 +2399,313 @@ export default function Bookings({ isMobile }) {
                     </div>
                   )}
                 </div>
+
+                {/* ── Expand/Collapse toggle ── */}
+                <button
+                  onClick={() =>
+                    setExpandedId(expandedId === b.id ? null : b.id)
+                  }
+                  style={{
+                    background: "none",
+                    border: "1px solid #1e1e1e",
+                    borderRadius: "6px",
+                    color: "#444",
+                    fontSize: "11px",
+                    fontWeight: "600",
+                    padding: "5px 12px",
+                    cursor: "pointer",
+                    alignSelf: "flex-start",
+                  }}
+                >
+                  {expandedId === b.id ? "▲ Less details" : "▼ More details"}
+                </button>
+
+                {/* ── Expanded: WhatsApp Quick Actions + Guest History ── */}
+                {expandedId === b.id &&
+                  (() => {
+                    const fin = getBookingFinancials(b);
+                    const clean = (b.phone || "").replace(/\D/g, "");
+                    const waPhone = "91" + clean.slice(-10);
+
+                    const todayStr = new Date().toISOString().split("T")[0];
+                    const tomorrowStr = new Date(Date.now() + 86400000)
+                      .toISOString()
+                      .split("T")[0];
+                    const isCheckinSoon =
+                      b.check_in === todayStr || b.check_in === tomorrowStr;
+
+                    const waConfirmText = encodeURIComponent(
+                      `Your booking at Luxora is confirmed! Check-in: ${fmt(
+                        b.check_in
+                      )}, Check-out: ${fmt(
+                        b.check_out
+                      )}. We look forward to hosting you!`
+                    );
+                    const waReminderText = encodeURIComponent(
+                      `Reminder: Your check-in at Luxora is tomorrow (${fmt(
+                        b.check_in
+                      )}). Please be ready with your Aadhaar for document upload.`
+                    );
+                    const waBalanceText = encodeURIComponent(
+                      `Hi ${b.name}, your remaining balance of ₹${fin.balance} is due at check-in. Please arrange accordingly.`
+                    );
+
+                    // Previous stays
+                    const prevStays = bookings.filter(
+                      (bk) => bk.phone === b.phone && bk.id !== b.id
+                    );
+
+                    return (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "14px",
+                        }}
+                      >
+                        {/* WhatsApp Quick Actions */}
+                        <div
+                          style={{
+                            background: "#1a1a1a",
+                            borderRadius: "10px",
+                            padding: "14px 16px",
+                            border: "1px solid #2a2a2a",
+                          }}
+                        >
+                          <p
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              color: "#444",
+                              letterSpacing: "0.08em",
+                              marginBottom: "10px",
+                            }}
+                          >
+                            WHATSAPP QUICK ACTIONS
+                          </p>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: "8px",
+                            }}
+                          >
+                            {/* Confirmation */}
+                            <button
+                              onClick={() =>
+                                window.open(
+                                  `https://wa.me/${waPhone}?text=${waConfirmText}`,
+                                  "_blank"
+                                )
+                              }
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "7px 12px",
+                                background: "rgba(37,211,102,0.1)",
+                                border: "1px solid rgba(37,211,102,0.3)",
+                                borderRadius: "8px",
+                                color: "#25d366",
+                                fontSize: "12px",
+                                fontWeight: "600",
+                                cursor: "pointer",
+                              }}
+                              title="Send booking confirmation on WhatsApp"
+                            >
+                              <MessageCircle size={13} /> Confirmation
+                            </button>
+
+                            {/* Check-in Reminder — only if check-in is today or tomorrow */}
+                            {isCheckinSoon && (
+                              <button
+                                onClick={() =>
+                                  window.open(
+                                    `https://wa.me/${waPhone}?text=${waReminderText}`,
+                                    "_blank"
+                                  )
+                                }
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  padding: "7px 12px",
+                                  background: "rgba(245,158,11,0.1)",
+                                  border: "1px solid rgba(245,158,11,0.3)",
+                                  borderRadius: "8px",
+                                  color: "#f59e0b",
+                                  fontSize: "12px",
+                                  fontWeight: "600",
+                                  cursor: "pointer",
+                                }}
+                                title="Send check-in reminder on WhatsApp"
+                              >
+                                <MessageCircle size={13} /> Check-in Reminder
+                              </button>
+                            )}
+
+                            {/* Balance Due — only if balance > 0 */}
+                            {fin.balance > 0 && (
+                              <button
+                                onClick={() =>
+                                  window.open(
+                                    `https://wa.me/${waPhone}?text=${waBalanceText}`,
+                                    "_blank"
+                                  )
+                                }
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  padding: "7px 12px",
+                                  background: "rgba(239,68,68,0.1)",
+                                  border: "1px solid rgba(239,68,68,0.3)",
+                                  borderRadius: "8px",
+                                  color: "#ef4444",
+                                  fontSize: "12px",
+                                  fontWeight: "600",
+                                  cursor: "pointer",
+                                }}
+                                title={`Send balance due reminder: ₹${fin.balance}`}
+                              >
+                                <MessageCircle size={13} /> Balance Due ₹
+                                {fin.balance.toLocaleString("en-IN")}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Previous Stays */}
+                        <div
+                          style={{
+                            background: "#1a1a1a",
+                            borderRadius: "10px",
+                            padding: "14px 16px",
+                            border: "1px solid #2a2a2a",
+                          }}
+                        >
+                          <p
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              color: "#444",
+                              letterSpacing: "0.08em",
+                              marginBottom: "10px",
+                            }}
+                          >
+                            PREVIOUS STAYS
+                            <span
+                              style={{
+                                marginLeft: "6px",
+                                color:
+                                  prevStays.length > 0 ? "#33b5b5" : "#333",
+                                fontWeight: "400",
+                              }}
+                            >
+                              · {prevStays.length} visit
+                              {prevStays.length !== 1 ? "s" : ""}
+                            </span>
+                          </p>
+                          {prevStays.length === 0 ? (
+                            <p style={{ fontSize: "13px", color: "#333" }}>
+                              First-time guest
+                            </p>
+                          ) : (
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "6px",
+                              }}
+                            >
+                              {prevStays.slice(0, 3).map((ps) => {
+                                const psFin = getBookingFinancials(ps);
+                                const psColor =
+                                  STATUS_COLORS[ps.status] ||
+                                  STATUS_COLORS.pending;
+                                return (
+                                  <div
+                                    key={ps.id}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "space-between",
+                                      padding: "8px 12px",
+                                      background: "#111",
+                                      borderRadius: "8px",
+                                      border: "1px solid #1e1e1e",
+                                    }}
+                                  >
+                                    <div>
+                                      <p
+                                        style={{
+                                          fontSize: "12px",
+                                          color: "#e0e0e0",
+                                          fontWeight: "600",
+                                        }}
+                                      >
+                                        {fmt(ps.check_in)} → {fmt(ps.check_out)}
+                                      </p>
+                                      <p
+                                        style={{
+                                          fontSize: "11px",
+                                          color: "#555",
+                                          marginTop: "2px",
+                                        }}
+                                      >
+                                        {Math.max(
+                                          0,
+                                          Math.round(
+                                            (new Date(ps.check_out) -
+                                              new Date(ps.check_in)) /
+                                              86400000
+                                          )
+                                        )}{" "}
+                                        nights
+                                      </p>
+                                    </div>
+                                    <div style={{ textAlign: "right" }}>
+                                      <p
+                                        style={{
+                                          fontSize: "12px",
+                                          color: "#10b981",
+                                          fontWeight: "600",
+                                        }}
+                                      >
+                                        {fmtR(psFin.totalPaid)} paid
+                                      </p>
+                                      <span
+                                        style={{
+                                          fontSize: "10px",
+                                          fontWeight: "600",
+                                          color: psColor.color,
+                                        }}
+                                      >
+                                        {ps.status}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {prevStays.length > 3 && (
+                                <p
+                                  style={{
+                                    fontSize: "11px",
+                                    color: "#444",
+                                    textAlign: "center",
+                                    paddingTop: "4px",
+                                  }}
+                                >
+                                  +{prevStays.length - 3} more stay
+                                  {prevStays.length - 3 !== 1 ? "s" : ""}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                 <p style={{ fontSize: "11px", color: "#333" }}>
                   Submitted {new Date(b.created_at).toLocaleString("en-IN")}

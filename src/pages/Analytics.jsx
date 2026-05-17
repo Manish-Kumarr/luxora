@@ -238,6 +238,58 @@ export default function Analytics({ isMobile }) {
       Profit: (revenueMonthMap[key] || 0) - (expenseMonthMap[key] || 0),
     }));
 
+  // ── ADR (Average Daily Rate) ──────────────────────
+  const totalBookedNights = activeBookings.reduce((s, b) => {
+    if (!b.check_in || !b.check_out) return s;
+    return s + Math.max(0, Math.round((new Date(b.check_out) - new Date(b.check_in)) / 86400000));
+  }, 0);
+  const adr = totalBookedNights > 0 ? Math.round(totalRevenue / totalBookedNights) : 0;
+
+  // ── Source breakdown (direct vs broker) ───────────
+  const brokerBookingIds = new Set(bookings.filter(b => b.broker_name && Number(b.broker_commission) > 0).map(b => b.id));
+  const brokerRevenue = filteredPayments.filter(p => brokerBookingIds.has(p.booking_id)).reduce((s, p) => s + (p.amount || 0), 0);
+  const directRevenue = totalRevenue - brokerRevenue;
+  const brokerBookingCount = filteredBookings.filter(b => b.broker_name && Number(b.broker_commission) > 0 && b.status !== "cancelled").length;
+  const directBookingCount = activeBookings.length - brokerBookingCount;
+  const sourceData = [
+    { name: "Direct", amount: directRevenue, count: directBookingCount, color: "#10b981" },
+    { name: "Broker", amount: brokerRevenue, count: brokerBookingCount, color: "#f59e0b" },
+  ];
+
+  // ── Broker analytics ──────────────────────────────
+  const brokerMap = {};
+  filteredBookings.filter(b => b.broker_name && Number(b.broker_commission) > 0).forEach(b => {
+    if (!brokerMap[b.broker_name]) brokerMap[b.broker_name] = { name: b.broker_name, bookings: 0, commission: 0, commissionPaid: 0, revenue: 0 };
+    brokerMap[b.broker_name].bookings += 1;
+    brokerMap[b.broker_name].commission += Number(b.broker_commission);
+    if (b.broker_commission_paid) brokerMap[b.broker_name].commissionPaid += Number(b.broker_commission);
+    const bPayments = payments.filter(p => p.booking_id === b.id);
+    brokerMap[b.broker_name].revenue += bPayments.reduce((s, p) => s + (p.amount || 0), 0);
+  });
+  const brokerAnalyticsData = Object.values(brokerMap).sort((a, b) => b.revenue - a.revenue);
+
+  // ── Occupancy by month ────────────────────────────
+  const occupancyByMonthMap = {};
+  bookings.forEach((b) => {
+    if (!b.check_in || !b.check_out || b.status === "cancelled") return;
+    const start = new Date(b.check_in);
+    const end = new Date(b.check_out);
+    let cur = new Date(start);
+    while (cur < end) {
+      const ym = cur.toISOString().slice(0, 7);
+      if (!occupancyByMonthMap[ym]) occupancyByMonthMap[ym] = new Set();
+      occupancyByMonthMap[ym].add(cur.toISOString().slice(0, 10));
+      cur.setDate(cur.getDate() + 1);
+    }
+  });
+  const occupancyMonthData = Object.entries(occupancyByMonthMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([ym, days]) => {
+      const [y, m] = ym.split("-");
+      const daysInMonth = new Date(Number(y), Number(m), 0).getDate();
+      return { month: `${MONTHS[parseInt(m) - 1]} ${y}`, occupancy: Math.round((days.size / daysInMonth) * 100), booked: days.size, total: daysInMonth };
+    });
+
   // Promo usage
   const promoUsedBookings = filteredBookings.filter((b) => b.promo_code || b.discount > 0);
   const totalDiscountGiven = filteredBookings.reduce((s, b) => {
@@ -254,6 +306,45 @@ export default function Analytics({ isMobile }) {
   const promoUsageData = Object.entries(promoCodeUsageMap)
     .map(([code, count]) => ({ code, count }))
     .sort((a, b) => b.count - a.count);
+
+  // ── Maintenance analytics ─────────────────────────
+  const maintenanceExpenses = filteredExpenses.filter((e) => e.category === "Maintenance");
+  const maintenanceCost = maintenanceExpenses.reduce((s, e) => s + (e.totalAmount || 0), 0);
+  const openIssues = maintenanceExpenses.filter((e) => e.maintenance_status === "open").length;
+  const inProgIssues = maintenanceExpenses.filter((e) => e.maintenance_status === "in-progress").length;
+  const resolvedIssues = maintenanceExpenses.filter((e) => e.maintenance_status === "resolved").length;
+
+  // ── Monthly P&L ───────────────────────────────────
+  const allMonthsForPL = new Set([
+    ...payments.map((p) => p.paid_at?.slice(0, 7)).filter(Boolean),
+    ...expenses.map((e) => e.date?.slice(0, 7)).filter(Boolean),
+  ]);
+  const monthlyPL = [...allMonthsForPL]
+    .sort()
+    .map((ym) => {
+      const [y, m] = ym.split("-");
+      const label = `${MONTHS[parseInt(m) - 1]} ${y}`;
+      const rev = payments
+        .filter((p) => p.paid_at?.startsWith(ym))
+        .reduce((s, p) => s + (p.amount || 0), 0);
+      const maintExp = expenses
+        .filter((e) => e.date?.startsWith(ym) && e.category === "Maintenance")
+        .reduce((s, e) => s + (e.totalAmount || 0), 0);
+      const regularExp = expenses
+        .filter((e) => e.date?.startsWith(ym) && e.category !== "Maintenance")
+        .reduce((s, e) => s + (e.totalAmount || 0), 0);
+      const exp = maintExp + regularExp;
+      const brokerPaid = bookings
+        .filter((b) => b.broker_commission_paid && b.broker_commission_paid_at?.startsWith(ym))
+        .reduce((s, b) => s + Number(b.broker_commission || 0), 0);
+      const net = rev - brokerPaid;
+      const profit = net - exp;
+      return { label, rev, exp, maintExp, regularExp, brokerPaid, net, profit };
+    });
+
+  // ── Best / Worst month ────────────────────────────
+  const bestMonth = monthlyPL.length > 0 ? monthlyPL.reduce((a, b) => b.profit > a.profit ? b : a) : null;
+  const worstMonth = monthlyPL.length > 1 ? monthlyPL.reduce((a, b) => b.profit < a.profit ? b : a) : null;
 
   const pad = isMobile ? "16px" : "32px";
   const gap = isMobile ? "14px" : "24px";
@@ -312,6 +403,41 @@ export default function Analytics({ isMobile }) {
             <p style={{ fontSize: "11px", color: "#444", marginTop: "2px" }}>{s.sub}</p>
           </div>
         ))}
+      </div>
+
+      {/* Source breakdown */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "14px" }}>
+        {sourceData.map((s) => {
+          const pct = totalRevenue > 0 ? Math.round((s.amount / totalRevenue) * 100) : 0;
+          return (
+            <div key={s.name} style={{ background: "#111", border: `1px solid ${s.color}22`, borderRadius: "12px", padding: isMobile ? "14px" : "16px 20px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "8px" }}>
+                <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: s.color }} />
+                <p style={{ fontSize: "11px", color: "#666", fontWeight: "600" }}>{s.name.toUpperCase()} BOOKINGS</p>
+              </div>
+              <p style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: "800", color: s.color }}>{fmt(s.amount)}</p>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px" }}>
+                <p style={{ fontSize: "11px", color: "#555" }}>{s.count} bookings</p>
+                <span style={{ fontSize: "12px", fontWeight: "700", color: s.color }}>{pct}%</span>
+              </div>
+              <div style={{ background: "#1a1a1a", borderRadius: "3px", height: "3px", overflow: "hidden", marginTop: "6px" }}>
+                <div style={{ width: pct + "%", height: "100%", background: s.color, borderRadius: "3px" }} />
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "16px 20px" }}>
+          <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", marginBottom: "8px" }}>ADR</p>
+          <p style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: "800", color: "#8b5cf6" }}>{adr > 0 ? fmt(adr) : "—"}</p>
+          <p style={{ fontSize: "11px", color: "#444", marginTop: "6px" }}>avg daily rate</p>
+          <p style={{ fontSize: "10px", color: "#333", marginTop: "2px" }}>{totalBookedNights} nights booked</p>
+        </div>
+        <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "16px 20px" }}>
+          <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", marginBottom: "8px" }}>BROKER COMMISSION</p>
+          <p style={{ fontSize: isMobile ? "18px" : "22px", fontWeight: "800", color: "#f59e0b" }}>{fmt(brokerPaidTotal)}</p>
+          <p style={{ fontSize: "11px", color: "#444", marginTop: "6px" }}>paid to brokers</p>
+          <p style={{ fontSize: "10px", color: "#333", marginTop: "2px" }}>{brokerAnalyticsData.length} broker{brokerAnalyticsData.length !== 1 ? "s" : ""}</p>
+        </div>
       </div>
 
       {/* Partner Payouts deduction */}
@@ -569,6 +695,57 @@ export default function Analytics({ isMobile }) {
         </div>
       )}
 
+      {/* ── MAINTENANCE ANALYTICS ── */}
+      {maintenanceExpenses.length > 0 && (
+        <>
+          <SectionTitle>Maintenance Analytics</SectionTitle>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "14px" }}>
+            {[
+              { label: "Total Cost",   value: fmt(maintenanceCost), color: "#f97316", sub: "All maintenance expenses" },
+              { label: "Open Issues",  value: openIssues,           color: "#f87171", sub: "Needs attention" },
+              { label: "In Progress",  value: inProgIssues,         color: "#f59e0b", sub: "Currently being fixed" },
+              { label: "Resolved",     value: resolvedIssues,       color: "#34d399", sub: "Completed issues" },
+            ].map((s) => (
+              <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px" }}>
+                <p style={{ fontSize: isMobile ? "20px" : "24px", fontWeight: "800", color: s.color }}>{s.value}</p>
+                <p style={{ fontSize: "12px", color: "#e0e0e0", fontWeight: "600", marginTop: "4px" }}>{s.label}</p>
+                <p style={{ fontSize: "11px", color: "#444", marginTop: "2px" }}>{s.sub}</p>
+              </div>
+            ))}
+          </div>
+          {/* Maintenance list */}
+          <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: "6px 0" }}>
+            <div style={{ padding: isMobile ? "12px 14px" : "12px 20px", borderBottom: "1px solid #1e1e1e" }}>
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>Recent Maintenance Issues</p>
+            </div>
+            {maintenanceExpenses.slice(0, 8).map((e, i) => {
+              const pColors = { urgent: "#ef4444", high: "#f97316", medium: "#f59e0b", low: "#34d399" };
+              const sColors = { open: "#f87171", "in-progress": "#f59e0b", resolved: "#34d399" };
+              const pColor = pColors[e.issue_priority] || "#f59e0b";
+              const sColor = sColors[e.maintenance_status] || "#888";
+              return (
+                <div key={e.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "11px 14px" : "12px 20px", borderBottom: i < Math.min(maintenanceExpenses.length, 8) - 1 ? "1px solid #161616" : "none", gap: "10px", flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
+                      <span style={{ fontSize: "10px", fontWeight: "700", color: pColor, background: pColor + "18", borderRadius: "20px", padding: "1px 6px", textTransform: "capitalize" }}>{e.issue_priority}</span>
+                      {e.room && <span style={{ fontSize: "11px", color: "#555" }}>{e.room}</span>}
+                      <span style={{ fontSize: "11px", color: "#444" }}>{e.date}</span>
+                    </div>
+                    <p style={{ fontSize: "13px", color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.description}</p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+                    {e.totalAmount > 0 && <span style={{ fontSize: "13px", fontWeight: "700", color: "#f97316" }}>{fmt(e.totalAmount)}</span>}
+                    <span style={{ fontSize: "11px", fontWeight: "600", color: sColor, background: sColor + "18", borderRadius: "20px", padding: "2px 8px", textTransform: "capitalize" }}>
+                      {e.maintenance_status === "in-progress" ? "In Progress" : e.maintenance_status}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       {/* ── BOOKING ANALYTICS ── */}
       <SectionTitle>Booking Analytics</SectionTitle>
 
@@ -589,13 +766,14 @@ export default function Analytics({ isMobile }) {
       </div>
 
       {/* Extra KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? "10px" : "14px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? "10px" : "14px" }}>
         {[
           { label: "Avg Revenue / Booking", value: activeBookings.length > 0 ? fmt(avgRevPerBooking) : "—", color: "#10b981", sub: "based on payments collected" },
           { label: "Repeat Guests", value: repeatGuests, color: "#33b5b5", sub: repeatRate + "% of unique guests" },
-          { label: "Avg Lead Time", value: avgLeadTime === "—" ? "—" : avgLeadTime + " days", color: "#f59e0b", sub: "booking to check-in", gridFull: isMobile },
+          { label: "Avg Lead Time", value: avgLeadTime === "—" ? "—" : avgLeadTime + " days", color: "#f59e0b", sub: "booking to check-in" },
+          { label: "Avg Daily Rate", value: adr > 0 ? fmt(adr) : "—", color: "#8b5cf6", sub: "revenue per booked night" },
         ].map((s) => (
-          <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px", gridColumn: s.gridFull ? "1 / -1" : "auto" }}>
+          <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px" }}>
             <p style={{ fontSize: isMobile ? "20px" : "24px", fontWeight: "700", color: s.color }}>{s.value}</p>
             <p style={{ fontSize: "12px", color: "#e0e0e0", fontWeight: "600", marginTop: "4px" }}>{s.label}</p>
             <p style={{ fontSize: "11px", color: "#444", marginTop: "2px" }}>{s.sub}</p>
@@ -636,6 +814,36 @@ export default function Analytics({ isMobile }) {
           ) : <Empty h={chartH} text="No data" />}
         </div>
       </div>
+
+      {/* Occupancy by Month */}
+      {occupancyMonthData.length > 0 && (
+        <div style={styles.chartCard}>
+          <h3 style={styles.chartTitle}>Monthly Occupancy Rate</h3>
+          <ResponsiveContainer width="100%" height={isMobile ? 200 : 240}>
+            <AreaChart data={occupancyMonthData} margin={{ left: 0, right: 8 }}>
+              <defs>
+                <linearGradient id="occGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#008080" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#008080" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" />
+              <XAxis dataKey="month" stroke="#444" tick={{ fontSize: 11 }} />
+              <YAxis stroke="#444" tick={{ fontSize: 11 }} tickFormatter={(v) => v + "%"} width={38} domain={[0, 100]} />
+              <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} formatter={(v, n, props) => [`${v}% (${props.payload.booked}/${props.payload.total} days)`, "Occupancy"]} />
+              <Area type="monotone" dataKey="occupancy" stroke="#008080" strokeWidth={2} fill="url(#occGrad)" dot={{ fill: "#008080", r: 3 }} />
+            </AreaChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "12px" }}>
+            {occupancyMonthData.map((d) => (
+              <div key={d.month} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <div style={{ width: "28px", height: "4px", borderRadius: "2px", background: d.occupancy >= 70 ? "#34d399" : d.occupancy >= 40 ? "#f59e0b" : "#ef4444" }} />
+                <span style={{ fontSize: "11px", color: "#666" }}>{d.month}: <span style={{ color: d.occupancy >= 70 ? "#34d399" : d.occupancy >= 40 ? "#f59e0b" : "#ef4444", fontWeight: "600" }}>{d.occupancy}%</span></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Popular Add-ons */}
       <div style={styles.chartCard}>
@@ -686,6 +894,167 @@ export default function Analytics({ isMobile }) {
               ))}
             </div>
           )}
+        </>
+      )}
+
+      {/* ── BROKER ANALYTICS ── */}
+      {brokerAnalyticsData.length > 0 && (
+        <>
+          <SectionTitle>Broker Analytics</SectionTitle>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? "10px" : "14px" }}>
+            {[
+              { label: "Total Brokers", value: brokerAnalyticsData.length, color: "#f59e0b", sub: "active partners" },
+              { label: "Total Commission", value: fmt(brokerAnalyticsData.reduce((s, b) => s + b.commission, 0)), color: "#f97316", sub: "all-time" },
+              { label: "Commission Paid", value: fmt(brokerAnalyticsData.reduce((s, b) => s + b.commissionPaid, 0)), color: "#34d399", sub: "settled" },
+            ].map((s) => (
+              <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px 20px" }}>
+                <p style={{ fontSize: isMobile ? "20px" : "24px", fontWeight: "700", color: s.color }}>{s.value}</p>
+                <p style={{ fontSize: "12px", color: "#e0e0e0", fontWeight: "600", marginTop: "4px" }}>{s.label}</p>
+                <p style={{ fontSize: "11px", color: "#444", marginTop: "2px" }}>{s.sub}</p>
+              </div>
+            ))}
+          </div>
+          <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", overflow: "hidden" }}>
+            <div style={{ padding: isMobile ? "12px 14px" : "12px 20px", borderBottom: "1px solid #1e1e1e", display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr 1fr" : "1.5fr 0.7fr 1fr 1fr 1fr", gap: "8px" }}>
+              {(isMobile ? ["Broker", "Bookings", "Commission"] : ["Broker", "Bookings", "Revenue Brought", "Commission", "Paid"]).map(h => (
+                <span key={h} style={{ fontSize: "11px", color: "#444", fontWeight: "600", textTransform: "uppercase" }}>{h}</span>
+              ))}
+            </div>
+            {brokerAnalyticsData.map((b, i) => {
+              const pendingComm = b.commission - b.commissionPaid;
+              return (
+                <div key={b.name} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr 1fr" : "1.5fr 0.7fr 1fr 1fr 1fr", gap: "8px", padding: isMobile ? "12px 14px" : "14px 20px", borderBottom: i < brokerAnalyticsData.length - 1 ? "1px solid #161616" : "none", alignItems: "center" }}>
+                  <p style={{ fontSize: "14px", fontWeight: "600", color: "#e0e0e0" }}>{b.name}</p>
+                  <p style={{ fontSize: "13px", color: "#888" }}>{b.bookings}</p>
+                  {!isMobile && <p style={{ fontSize: "13px", fontWeight: "600", color: "#10b981" }}>{fmt(b.revenue)}</p>}
+                  <div>
+                    <p style={{ fontSize: "13px", fontWeight: "700", color: "#f59e0b" }}>{fmt(b.commission)}</p>
+                    {isMobile && <p style={{ fontSize: "10px", color: "#555", marginTop: "2px" }}>{b.bookings} bookings</p>}
+                  </div>
+                  {!isMobile && (
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <span style={{ fontSize: "12px", color: "#34d399", fontWeight: "600" }}>{fmt(b.commissionPaid)}</span>
+                      {pendingComm > 0 && <span style={{ fontSize: "11px", color: "#f59e0b", background: "rgba(245,158,11,0.1)", borderRadius: "20px", padding: "1px 7px" }}>+{fmt(pendingComm)}</span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {brokerAnalyticsData.length > 0 && (
+            <div style={styles.chartCard}>
+              <h3 style={styles.chartTitle}>Revenue by Broker</h3>
+              <ResponsiveContainer width="100%" height={isMobile ? 180 : 220}>
+                <BarChart data={brokerAnalyticsData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" horizontal={false} />
+                  <XAxis type="number" stroke="#444" tick={{ fontSize: 11 }} tickFormatter={(v) => "₹" + v / 1000 + "k"} />
+                  <YAxis type="category" dataKey="name" stroke="#444" tick={{ fontSize: 12 }} width={80} />
+                  <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: 8 }} itemStyle={{ color: "#fff" }} formatter={(v) => [fmt(v)]} />
+                  <Bar dataKey="revenue" name="Revenue" fill="#10b981" radius={[0, 6, 6, 0]} />
+                  <Bar dataKey="commission" name="Commission" fill="#f59e0b" radius={[0, 6, 6, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── MONTHLY P&L ── */}
+      {monthlyPL.length > 0 && (
+        <>
+          <SectionTitle>Monthly P&amp;L Report</SectionTitle>
+          <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr 1fr" : "1.2fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: "0", background: "#0d0d0d", borderBottom: "1px solid #1e1e1e" }}>
+              {(isMobile
+                ? ["Month", "Revenue", "Profit"]
+                : ["Month", "Revenue", "Partner Paid", "Net Revenue", "Expenses", "Maintenance", "Profit / Loss"]
+              ).map((h) => (
+                <div key={h} style={{ padding: isMobile ? "10px 12px" : "12px 16px", fontSize: "11px", fontWeight: "600", color: "#444", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</div>
+              ))}
+            </div>
+            {/* Rows */}
+            {[...monthlyPL].reverse().map((row, i) => {
+              const isPos = row.profit >= 0;
+              const isBest = bestMonth && row.label === bestMonth.label;
+              const isWorst = worstMonth && row.label === worstMonth.label && monthlyPL.length > 1;
+              return (
+                <div key={row.label} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr 1fr" : "1.2fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: "0", borderBottom: i < monthlyPL.length - 1 ? "1px solid #161616" : "none", alignItems: "center", background: isBest ? "rgba(52,211,153,0.04)" : isWorst ? "rgba(248,113,113,0.04)" : "transparent" }}>
+                  <div style={{ padding: isMobile ? "12px 12px" : "14px 16px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>{row.label}</p>
+                    {isBest && <span style={{ fontSize: "9px", fontWeight: "700", color: "#34d399", background: "rgba(52,211,153,0.15)", borderRadius: "20px", padding: "1px 6px" }}>BEST</span>}
+                    {isWorst && <span style={{ fontSize: "9px", fontWeight: "700", color: "#f87171", background: "rgba(248,113,113,0.15)", borderRadius: "20px", padding: "1px 6px" }}>WORST</span>}
+                  </div>
+                  <div style={{ padding: isMobile ? "12px 12px" : "14px 16px" }}>
+                    <p style={{ fontSize: "13px", fontWeight: "700", color: "#10b981" }}>{fmt(row.rev)}</p>
+                  </div>
+                  {!isMobile && (
+                    <>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", color: row.brokerPaid > 0 ? "#f59e0b" : "#333" }}>{row.brokerPaid > 0 ? `− ${fmt(row.brokerPaid)}` : "—"}</p>
+                      </div>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", fontWeight: "600", color: "#33b5b5" }}>{fmt(row.net)}</p>
+                      </div>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", color: "#ef4444" }}>{row.regularExp > 0 ? fmt(row.regularExp) : "—"}</p>
+                      </div>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", color: row.maintExp > 0 ? "#f97316" : "#333" }}>{row.maintExp > 0 ? fmt(row.maintExp) : "—"}</p>
+                      </div>
+                    </>
+                  )}
+                  <div style={{ padding: isMobile ? "12px 12px" : "14px 16px" }}>
+                    <p style={{ fontSize: "13px", fontWeight: "800", color: isPos ? "#34d399" : "#f87171" }}>
+                      {isPos ? "+" : "−"}{fmt(Math.abs(row.profit))}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+            {/* Totals row */}
+            {(() => {
+              const totalRev = monthlyPL.reduce((s, r) => s + r.rev, 0);
+              const totalExp = monthlyPL.reduce((s, r) => s + r.exp, 0);
+              const totalMaintExp = monthlyPL.reduce((s, r) => s + r.maintExp, 0);
+              const totalRegularExp = monthlyPL.reduce((s, r) => s + r.regularExp, 0);
+              const totalBroker = monthlyPL.reduce((s, r) => s + r.brokerPaid, 0);
+              const totalNet = monthlyPL.reduce((s, r) => s + r.net, 0);
+              const totalProfit = monthlyPL.reduce((s, r) => s + r.profit, 0);
+              const isPos = totalProfit >= 0;
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr 1fr" : "1.2fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: "0", background: "#0d0d0d", borderTop: "1px solid #2a2a2a" }}>
+                  <div style={{ padding: isMobile ? "12px 12px" : "14px 16px" }}>
+                    <p style={{ fontSize: "12px", fontWeight: "700", color: "#555", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</p>
+                  </div>
+                  <div style={{ padding: isMobile ? "12px 12px" : "14px 16px" }}>
+                    <p style={{ fontSize: "13px", fontWeight: "800", color: "#10b981" }}>{fmt(totalRev)}</p>
+                  </div>
+                  {!isMobile && (
+                    <>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", fontWeight: "700", color: totalBroker > 0 ? "#f59e0b" : "#333" }}>{totalBroker > 0 ? `− ${fmt(totalBroker)}` : "—"}</p>
+                      </div>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", fontWeight: "800", color: "#33b5b5" }}>{fmt(totalNet)}</p>
+                      </div>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", fontWeight: "800", color: "#ef4444" }}>{totalRegularExp > 0 ? fmt(totalRegularExp) : "—"}</p>
+                      </div>
+                      <div style={{ padding: "14px 16px" }}>
+                        <p style={{ fontSize: "13px", fontWeight: "800", color: totalMaintExp > 0 ? "#f97316" : "#333" }}>{totalMaintExp > 0 ? fmt(totalMaintExp) : "—"}</p>
+                      </div>
+                    </>
+                  )}
+                  <div style={{ padding: isMobile ? "12px 12px" : "14px 16px" }}>
+                    <p style={{ fontSize: "14px", fontWeight: "800", color: isPos ? "#34d399" : "#f87171" }}>
+                      {isPos ? "+" : "−"}{fmt(Math.abs(totalProfit))}
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </>
       )}
     </div>

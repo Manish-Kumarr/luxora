@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApp } from "../context/AppContext";
-import { Plus, Pencil, Trash2, Check, X, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, X, Search, Tag, Users, Gift, CheckCircle } from "lucide-react";
 
 export default function GuestPromos({ isMobile }) {
   const {
@@ -66,6 +66,27 @@ export default function GuestPromos({ isMobile }) {
       )
     : allPhones;
 
+  // ── Stats ──
+  const totalCodes = promoCodes.length;
+  const activeCodes = promoCodes.filter((p) => p.active).length;
+  const totalAssigned = phonePromos.length;
+  const totalClaimed = phonePromos.filter((p) => p.claimed).length;
+
+  // Per-code usage from bookings
+  const codeUsageMap = {};
+  bookings.forEach((b) => {
+    if (b.promo_code) codeUsageMap[b.promo_code] = (codeUsageMap[b.promo_code] || 0) + 1;
+  });
+
+  // Claimed promo detail — guests who claimed + booking info
+  const claimedDetails = phonePromos
+    .filter((p) => p.claimed)
+    .map((p) => {
+      const usedBooking = bookings.find((b) => b.promo_code === p.promo_code && b.phone === p.phone);
+      const promo = promoCodes.find((pc) => pc.code === p.promo_code);
+      return { ...p, booking: usedBooking, discount: promo?.discount_percent };
+    });
+
   const getAssigned = (phone) => phonePromos.find((p) => p.phone === phone);
 
   const handleAssign = async (phone) => {
@@ -97,6 +118,26 @@ export default function GuestPromos({ isMobile }) {
       <div>
         <h1 style={{ fontSize: isMobile ? "20px" : "26px", fontWeight: "700", color: "#f0f0f0" }}>Promos</h1>
         <p style={{ color: "#555", fontSize: "14px", marginTop: "4px" }}>Manage promo codes and assign them to guests</p>
+      </div>
+
+      {/* ── Stats Cards ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: "12px" }}>
+        {[
+          { label: "Total Codes", value: totalCodes, icon: Tag, color: "#33b5b5", bg: "rgba(0,128,128,0.1)", border: "rgba(0,128,128,0.25)" },
+          { label: "Active Codes", value: activeCodes, icon: CheckCircle, color: "#10b981", bg: "rgba(16,185,129,0.1)", border: "rgba(16,185,129,0.25)" },
+          { label: "Assigned", value: totalAssigned, icon: Users, color: "#a78bfa", bg: "rgba(167,139,250,0.1)", border: "rgba(167,139,250,0.25)" },
+          { label: "Claimed", value: totalClaimed, icon: Gift, color: "#f59e0b", bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.25)" },
+        ].map(({ label, value, icon: Icon, color, bg, border }) => (
+          <div key={label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: "16px 20px", display: "flex", alignItems: "center", gap: "14px" }}>
+            <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: bg, border: `1px solid ${border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon size={17} color={color} />
+            </div>
+            <div>
+              <p style={{ fontSize: "22px", fontWeight: "700", color: "#f0f0f0", lineHeight: 1 }}>{value}</p>
+              <p style={{ fontSize: "11px", color: "#555", marginTop: "4px", fontWeight: "600", letterSpacing: "0.04em" }}>{label}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* ── Promo Codes Section ── */}
@@ -150,13 +191,13 @@ export default function GuestPromos({ isMobile }) {
           <p style={{ fontSize: "13px", color: "#333" }}>No promo codes yet.</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: "8px", padding: "6px 10px", borderBottom: "1px solid #1e1e1e" }}>
-              {["CODE", "DISCOUNT", "STATUS", ""].map((h) => (
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 60px 1fr auto", gap: "8px", padding: "6px 10px", borderBottom: "1px solid #1e1e1e" }}>
+              {["CODE", "DISCOUNT", "USED", "STATUS", ""].map((h) => (
                 <span key={h} style={{ fontSize: "10px", color: "#444", fontWeight: "600", letterSpacing: "0.07em" }}>{h}</span>
               ))}
             </div>
             {promoCodes.map((p) => (
-              <div key={p.code} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: "8px", padding: "10px", borderBottom: "1px solid #161616", alignItems: "center" }}>
+              <div key={p.code} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 60px 1fr auto", gap: "8px", padding: "10px", borderBottom: "1px solid #161616", alignItems: "center" }}>
                 <span style={{ fontSize: "13px", color: "#e0e0e0", fontWeight: "700", letterSpacing: "0.06em" }}>{p.code}</span>
 
                 {/* Edit discount inline */}
@@ -182,6 +223,11 @@ export default function GuestPromos({ isMobile }) {
                     </div>
                   )}
                 </div>
+
+                {/* Usage count */}
+                <span style={{ fontSize: "12px", color: codeUsageMap[p.code] ? "#f59e0b" : "#333", fontWeight: "700" }}>
+                  {codeUsageMap[p.code] || 0}×
+                </span>
 
                 {/* Toggle active */}
                 <button
@@ -344,6 +390,46 @@ export default function GuestPromos({ isMobile }) {
           </div>
         )}
       </div>
+
+      {/* ── Claimed Promos Section ── */}
+      {claimedDetails.length > 0 && (
+        <div style={card}>
+          <p style={{ ...sectionLabel, marginBottom: "16px" }}>CLAIMED PROMOS</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "1px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "2fr 1fr 1fr 2fr", gap: "12px", padding: "6px 12px", borderBottom: "1px solid #1e1e1e" }}>
+              {["Guest", "Code", "Discount", "Booking"].map((h) => (
+                <span key={h} style={{ fontSize: "10px", color: "#444", fontWeight: "600", letterSpacing: "0.07em" }}>{h}</span>
+              ))}
+            </div>
+            {claimedDetails.map((c) => (
+              <div key={c.id} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "2fr 1fr 1fr 2fr", gap: "12px", padding: "12px", borderBottom: "1px solid #161616", alignItems: "center" }}>
+                <div>
+                  <p style={{ fontSize: "13px", color: "#e0e0e0", fontWeight: "600" }}>{c.phone}</p>
+                  {c.booking && <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>{c.booking.name}</p>}
+                </div>
+                <span style={{ fontSize: "12px", fontWeight: "700", color: "#f59e0b", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: "6px", padding: "3px 8px", display: "inline-block" }}>
+                  {c.promo_code}
+                </span>
+                <span style={{ fontSize: "13px", color: "#10b981", fontWeight: "700" }}>
+                  {c.discount}% off
+                </span>
+                <div>
+                  {c.booking ? (
+                    <div>
+                      <p style={{ fontSize: "12px", color: "#e0e0e0" }}>{c.booking.name}</p>
+                      <p style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>
+                        {c.booking.check_in} → {c.booking.check_out}
+                      </p>
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: "12px", color: "#444" }}>No booking linked</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Delete confirm modal */}
       {deleteCode && (
