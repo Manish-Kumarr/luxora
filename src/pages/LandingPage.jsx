@@ -353,7 +353,47 @@ const CSS = `
     .lp-price-card { text-align: center; }
     .lp-review-card { text-align: center; }
     section { padding-left: 20px !important; padding-right: 20px !important; }
+    .lp-contact-grid { flex-direction: column !important; }
+    .lp-contact-map { height: 260px !important; }
   }
+
+  .lp-contact-input {
+    width: 100%;
+    background: #111;
+    border: 1px solid #1e1e1e;
+    border-radius: 10px;
+    padding: 12px 16px;
+    color: #e0e0e0;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    box-sizing: border-box;
+    resize: none;
+    font-family: inherit;
+  }
+  .lp-contact-input::placeholder { color: #3a3a3a; }
+  .lp-contact-input:focus {
+    border-color: rgba(0,128,128,0.5);
+    box-shadow: 0 0 0 3px rgba(0,128,128,0.08);
+  }
+  .lp-contact-send-btn {
+    width: 100%;
+    padding: 13px;
+    border-radius: 10px;
+    background: #25d366;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: opacity 0.2s, transform 0.2s;
+    letter-spacing: 0.02em;
+  }
+  .lp-contact-send-btn:hover { opacity: 0.9; transform: translateY(-1px); }
 `;
 
 const FEATURES = [
@@ -459,6 +499,7 @@ export default function LandingPage() {
     weekend_rate: null,
   });
   const [newGuestPct, setNewGuestPct] = useState(null);
+  const [contactQuery, setContactQuery] = useState("");
 
   useEffect(() => {
     const el = document.createElement("style");
@@ -571,7 +612,7 @@ export default function LandingPage() {
 
       {/* WhatsApp Floating Button */}
       <a
-        href="https://wa.me/917004011270?text=Hi%20Luxora!%20I%20came%20across%20your%20place%20and%20I%27m%20interested%20in%20booking%20a%20stay.%20Could%20you%20please%20share%20the%20availability%20and%20details%3F%20Looking%20forward%20to%20staying%20with%20you!"
+        href="https://wa.me/919355176903?text=Hi%20Luxora!%20I%20came%20across%20your%20place%20and%20I%27m%20interested%20in%20booking%20a%20stay.%20Could%20you%20please%20share%20the%20availability%20and%20details%3F%20Looking%20forward%20to%20staying%20with%20you!"
         target="_blank"
         rel="noopener noreferrer"
         className="lp-wa-btn"
@@ -644,6 +685,9 @@ export default function LandingPage() {
             </a>
             <a href="#pricing" className="lp-nav-link lp-nav-desktop-only">
               Pricing
+            </a>
+            <a href="#contact" className="lp-nav-link lp-nav-desktop-only">
+              Contact
             </a>
             <a
               href="https://www.instagram.com/luxora.ncr/"
@@ -1416,6 +1460,162 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* Contact Us */}
+        <section
+          id="contact"
+          style={{
+            padding: "90px 40px",
+            background: "rgba(255,255,255,0.012)",
+            borderTop: "1px solid rgba(255,255,255,0.035)",
+            borderBottom: "1px solid rgba(255,255,255,0.035)",
+          }}
+        >
+          <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: "52px" }}>
+              <p className="lp-section-label">Contact Us</p>
+              <h2
+                style={{
+                  fontSize: "clamp(24px, 3vw, 38px)",
+                  fontWeight: "800",
+                  color: "#f0f0f0",
+                  letterSpacing: "-0.02em",
+                  marginBottom: "10px",
+                }}
+              >
+                Find Us & Get in Touch
+              </h2>
+              <p style={{ color: "#555", fontSize: "15px" }}>
+                Drop us a message on WhatsApp — we usually reply within minutes.
+              </p>
+            </div>
+
+            <div
+              className="lp-contact-grid"
+              style={{
+                display: "flex",
+                gap: "28px",
+                alignItems: "stretch",
+              }}
+            >
+              {/* Map */}
+              <div
+                className="lp-contact-map"
+                style={{
+                  flex: 1,
+                  minWidth: "280px",
+                  borderRadius: "16px",
+                  overflow: "hidden",
+                  border: "1px solid #1a1a1a",
+                  height: "400px",
+                }}
+              >
+                <iframe
+                  title="Luxora Location"
+                  src="https://maps.google.com/maps?q=Supertech+Northeye+Sector+74+Noida&output=embed&z=16"
+                  width="100%"
+                  height="100%"
+                  style={{ border: 0, display: "block" }}
+                  allowFullScreen=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              </div>
+
+              {/* Contact Form */}
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: "280px",
+                  background: "#0f0f0f",
+                  border: "1px solid #1a1a1a",
+                  borderRadius: "16px",
+                  padding: "32px 28px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "20px",
+                }}
+              >
+                {/* Address info */}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    alignItems: "flex-start",
+                    padding: "16px",
+                    background: "rgba(0,128,128,0.05)",
+                    border: "1px solid rgba(0,128,128,0.15)",
+                    borderRadius: "12px",
+                  }}
+                >
+                  <span style={{ fontSize: "22px", flexShrink: 0 }}>📍</span>
+                  <div>
+                    <p style={{ fontSize: "13px", fontWeight: "700", color: "#e0e0e0", marginBottom: "4px" }}>
+                      Northeye, Supertech
+                    </p>
+                    <p style={{ fontSize: "12px", color: "#555", lineHeight: "1.6" }}>
+                      Sector 74, Noida, Uttar Pradesh
+                    </p>
+                  </div>
+                </div>
+
+                {/* WhatsApp info */}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    alignItems: "center",
+                    padding: "14px 16px",
+                    background: "rgba(37,211,102,0.04)",
+                    border: "1px solid rgba(37,211,102,0.15)",
+                    borderRadius: "12px",
+                  }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="#25d366" style={{ flexShrink: 0 }}>
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" />
+                    <path d="M12 0C5.373 0 0 5.373 0 12c0 2.117.549 4.099 1.51 5.824L.057 23.979l6.347-1.47A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 01-4.99-1.368l-.36-.213-3.767.873.944-3.648-.234-.373A9.818 9.818 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z" />
+                  </svg>
+                  <p style={{ fontSize: "13px", color: "#25d366", fontWeight: "600" }}>
+                    +91 93551 76903
+                  </p>
+                </div>
+
+                <div style={{ borderTop: "1px solid #1a1a1a", paddingTop: "4px" }}>
+                  <p style={{ fontSize: "12px", color: "#444", fontWeight: "600", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "14px" }}>
+                    Send us a message
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <textarea
+                      className="lp-contact-input"
+                      rows={4}
+                      placeholder="Type your query here… e.g. Is the room available for 3 nights from June 10?"
+                      value={contactQuery}
+                      onChange={(e) => setContactQuery(e.target.value)}
+                    />
+                    <button
+                      className="lp-contact-send-btn"
+                      onClick={() => {
+                        const msg = contactQuery.trim()
+                          ? `Hi Luxora! ${contactQuery.trim()}`
+                          : "Hi Luxora! I came across your place and I'm interested in knowing more.";
+                        window.open(
+                          `https://wa.me/919355176903?text=${encodeURIComponent(msg)}`,
+                          "_blank"
+                        );
+                      }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" />
+                        <path d="M12 0C5.373 0 0 5.373 0 12c0 2.117.549 4.099 1.51 5.824L.057 23.979l6.347-1.47A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 01-4.99-1.368l-.36-.213-3.767.873.944-3.648-.234-.373A9.818 9.818 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z" />
+                      </svg>
+                      Send on WhatsApp
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Footer */}
         <footer
           className="lp-footer"
@@ -1474,6 +1674,16 @@ export default function LandingPage() {
               }}
             >
               Pricing
+            </a>
+            <a
+              href="#contact"
+              style={{
+                color: "#333",
+                fontSize: "12px",
+                textDecoration: "none",
+              }}
+            >
+              Contact
             </a>
             <a
               href="https://www.instagram.com/luxora.ncr/"

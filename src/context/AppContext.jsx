@@ -240,9 +240,15 @@ export function AppProvider({ children }) {
     return { error };
   };
 
-  const getDocUrls = (bookingId) => {
-    const base = (name) => supabase.storage.from("documents").getPublicUrl(`${bookingId}/${name}`).data.publicUrl;
-    return { front: base("aadhaar_front"), back: base("aadhaar_back") };
+  const getDocUrls = (bookingId, guestsCount = 1) => {
+    const base = (name) =>
+      supabase.storage.from("documents").getPublicUrl(`${bookingId}/${name}`).data.publicUrl;
+    const count = Math.max(1, Number(guestsCount) || 1);
+    const guests = Array.from({ length: count }, (_, i) => ({
+      front: base(`guest_${i + 1}_doc_front`),
+      back: base(`guest_${i + 1}_doc_back`),
+    }));
+    return { guests };
   };
 
   // ── Payments ─────────────────────────────────────────

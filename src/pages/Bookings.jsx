@@ -199,7 +199,7 @@ export default function Bookings({ isMobile }) {
   const [statusConfirm, setStatusConfirm] = useState(null); // { bookingId, status, name }
 
   // Docs modal
-  const [docsModal, setDocsModal] = useState(null); // { front, back, bookingId }
+  const [docsModal, setDocsModal] = useState(null); // { guests: [{front,back},...], bookingId, activeGuest }
   const [docOps, setDocOps] = useState({}); // { front: 'deleting'|'uploading', back: ... }
   const frontInputRef = useRef(null);
   const backInputRef = useRef(null);
@@ -207,26 +207,33 @@ export default function Bookings({ isMobile }) {
   const handleDocDelete = async (side) => {
     if (!docsModal?.bookingId) return;
     setDocOps((p) => ({ ...p, [side]: "deleting" }));
-    const path = `${docsModal.bookingId}/aadhaar_${side}`;
+    const guestIdx = docsModal.activeGuest ?? 0;
+    const path = `${docsModal.bookingId}/guest_${guestIdx + 1}_doc_${side}`;
     await supabase.storage.from("documents").remove([path]);
-    // Check if both sides are now gone
-    const otherSide = side === "front" ? "back" : "front";
+    // If no docs remain for any guest → reset status to pending
     const { data: list } = await supabase.storage
       .from("documents")
       .list(docsModal.bookingId);
-    const otherExists = list?.some((f) => f.name === `aadhaar_${otherSide}`);
-    if (!otherExists) {
+    const anyRemaining = list?.some(
+      (f) => f.name.endsWith("_doc_front") || f.name.endsWith("_doc_back")
+    );
+    if (!anyRemaining) {
       await updateBooking(docsModal.bookingId, { docs_status: "pending" });
     }
-    // Update local modal state
-    setDocsModal((prev) => ({ ...prev, [side]: null }));
+    setDocsModal((prev) => ({
+      ...prev,
+      guests: prev.guests.map((g, i) =>
+        i === guestIdx ? { ...g, [side]: null } : g
+      ),
+    }));
     setDocOps((p) => ({ ...p, [side]: null }));
   };
 
   const handleDocReplace = async (side, file) => {
     if (!file || !docsModal?.bookingId) return;
     setDocOps((p) => ({ ...p, [side]: "uploading" }));
-    const path = `${docsModal.bookingId}/aadhaar_${side}`;
+    const guestIdx = docsModal.activeGuest ?? 0;
+    const path = `${docsModal.bookingId}/guest_${guestIdx + 1}_doc_${side}`;
     await supabase.storage
       .from("documents")
       .upload(path, file, { upsert: true });
@@ -234,7 +241,12 @@ export default function Bookings({ isMobile }) {
       .from("documents")
       .getPublicUrl(path);
     const freshUrl = urlData.publicUrl + "?t=" + Date.now();
-    setDocsModal((prev) => ({ ...prev, [side]: freshUrl }));
+    setDocsModal((prev) => ({
+      ...prev,
+      guests: prev.guests.map((g, i) =>
+        i === guestIdx ? { ...g, [side]: freshUrl } : g
+      ),
+    }));
     setDocOps((p) => ({ ...p, [side]: null }));
   };
 
@@ -1433,7 +1445,7 @@ export default function Bookings({ isMobile }) {
                   {b.docs_status === "received" ? (
                     <button
                       onClick={() =>
-                        setDocsModal({ ...getDocUrls(b.id), bookingId: b.id })
+                        setDocsModal({ ...getDocUrls(b.id, b.guests_count || 1), bookingId: b.id, activeGuest: 0 })
                       }
                       style={{
                         background: "none",
@@ -1455,7 +1467,7 @@ export default function Bookings({ isMobile }) {
                         const waPhone =
                           clean.length === 10 ? "91" + clean : clean;
                         const waText = encodeURIComponent(
-                          `Hi ${b.name}! \n\nYour booking at Luxora is confirmed.\n\nTo complete your check-in, please upload your Aadhaar card here:\n ${uploadLink}\n\nThank you!`
+                          `Hi ${b.name}! \n\nYour booking at Luxora is confirmed.\n\nTo complete your check-in, please upload your gov approved document here:\n ${uploadLink}\n\nThank you!`
                         );
                         window.open(
                           `https://wa.me/${waPhone}?text=${waText}`,
@@ -2444,7 +2456,7 @@ export default function Bookings({ isMobile }) {
                     const waReminderText = encodeURIComponent(
                       `Reminder: Your check-in at Luxora is tomorrow (${fmt(
                         b.check_in
-                      )}). Please be ready with your Aadhaar for document upload.`
+                      )}). Please be ready with your gov approved document for upload.`
                     );
                     const waBalanceText = encodeURIComponent(
                       `Hi ${b.name}, your remaining balance of ₹${fin.balance} is due at check-in. Please arrange accordingly.`
@@ -4702,7 +4714,7 @@ export default function Bookings({ isMobile }) {
                   fontSize: "16px",
                 }}
               >
-                Aadhaar Documents
+                Guest Documents
               </p>
               <button
                 onClick={() => setDocsModal(null)}
@@ -4717,6 +4729,49 @@ export default function Bookings({ isMobile }) {
                 <X size={18} />
               </button>
             </div>
+
+            {/* Guest tabs — only show if multiple guests */}
+            {docsModal.guests.length > 1 && (
+              <div
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  padding: "12px 20px 0",
+                  overflowX: "auto",
+                }}
+              >
+                {docsModal.guests.map((g, i) => {
+                  const isActive = docsModal.activeGuest === i;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() =>
+                        setDocsModal((prev) => ({ ...prev, activeGuest: i }))
+                      }
+                      style={{
+                        flex: "0 0 auto",
+                        padding: "6px 14px",
+                        borderRadius: "8px",
+                        border: isActive
+                          ? "1px solid rgba(0,128,128,0.6)"
+                          : "1px solid #2a2a2a",
+                        background: isActive
+                          ? "rgba(0,128,128,0.15)"
+                          : "#1a1a1a",
+                        color: isActive ? "#33b5b5" : "#555",
+                        fontSize: "12px",
+                        fontWeight: "600",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Guest {i + 1}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             <div
               style={{
                 padding: "20px",
@@ -4750,7 +4805,9 @@ export default function Bookings({ isMobile }) {
               />
 
               {["front", "back"].map((side) => {
-                const url = docsModal[side];
+                const currentGuest =
+                  docsModal.guests[docsModal.activeGuest] ?? {};
+                const url = currentGuest[side];
                 const op = docOps[side];
                 const inputRef =
                   side === "front" ? frontInputRef : backInputRef;
@@ -4825,7 +4882,7 @@ export default function Bookings({ isMobile }) {
                       <>
                         <img
                           src={url}
-                          alt={`Aadhaar ${side}`}
+                          alt={`Document ${side}`}
                           style={{
                             width: "100%",
                             borderRadius: "8px",

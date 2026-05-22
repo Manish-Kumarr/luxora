@@ -10,10 +10,9 @@ export default function UploadDocs() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
-  const [frontFile, setFrontFile] = useState(null);
-  const [backFile, setBackFile] = useState(null);
-  const [frontPreview, setFrontPreview] = useState(null);
-  const [backPreview, setBackPreview] = useState(null);
+  const [activeTab, setActiveTab] = useState(0);
+  // guestFiles[i] = { front: File|null, back: File|null, frontPreview: str|null, backPreview: str|null }
+  const [guestFiles, setGuestFiles] = useState([]);
 
   const [uploading, setUploading] = useState(false);
   const [done, setDone] = useState(false);
@@ -31,9 +30,19 @@ export default function UploadDocs() {
       .eq("id", bookingId)
       .single()
       .then(({ data, error }) => {
-        if (error || !data) setNotFound(true);
-        else {
+        if (error || !data) {
+          setNotFound(true);
+        } else {
           setBooking(data);
+          const count = Math.max(1, Number(data.guests_count) || 1);
+          setGuestFiles(
+            Array.from({ length: count }, () => ({
+              front: null,
+              back: null,
+              frontPreview: null,
+              backPreview: null,
+            }))
+          );
           if (data.docs_status === "received") setDone(true);
         }
         setLoading(false);
@@ -49,19 +58,29 @@ export default function UploadDocs() {
     }
     setError("");
     const url = URL.createObjectURL(file);
-    if (side === "front") {
-      setFrontFile(file);
-      setFrontPreview(url);
-    } else {
-      setBackFile(file);
-      setBackPreview(url);
-    }
+    setGuestFiles((prev) =>
+      prev.map((g, i) =>
+        i === activeTab
+          ? {
+              ...g,
+              [side]: file,
+              [`${side}Preview`]: url,
+            }
+          : g
+      )
+    );
   };
 
   const handleUpload = async () => {
-    if (!frontFile || !backFile) {
-      setError("Please upload both front and back sides of your Aadhaar.");
-      return;
+    // Validate all guests have at least front side
+    for (let i = 0; i < guestFiles.length; i++) {
+      if (!guestFiles[i].front) {
+        setActiveTab(i);
+        setError(
+          `Please upload at least the front side of the document for Guest ${i + 1}.`
+        );
+        return;
+      }
     }
     setError("");
     setUploading(true);
@@ -74,18 +93,28 @@ export default function UploadDocs() {
       return error;
     };
 
-    const frontErr = await uploadFile(frontFile, "aadhaar_front");
-    if (frontErr) {
-      setError("Upload failed. Please try again.");
-      setUploading(false);
-      return;
-    }
-
-    const backErr = await uploadFile(backFile, "aadhaar_back");
-    if (backErr) {
-      setError("Back side upload failed. Please try again.");
-      setUploading(false);
-      return;
+    for (let i = 0; i < guestFiles.length; i++) {
+      const prefix = `guest_${i + 1}`;
+      const frontErr = await uploadFile(
+        guestFiles[i].front,
+        `${prefix}_doc_front`
+      );
+      if (frontErr) {
+        setError(`Upload failed for Guest ${i + 1} (front). Please try again.`);
+        setUploading(false);
+        return;
+      }
+      if (guestFiles[i].back) {
+        const backErr = await uploadFile(
+          guestFiles[i].back,
+          `${prefix}_doc_back`
+        );
+        if (backErr) {
+          setError(`Upload failed for Guest ${i + 1} (back). Please try again.`);
+          setUploading(false);
+          return;
+        }
+      }
     }
 
     const { error: updateErr } = await supabase
@@ -163,8 +192,8 @@ export default function UploadDocs() {
           <p style={{ color: "#666", fontSize: "13px", lineHeight: "1.6" }}>
             Thank you,{" "}
             <strong style={{ color: "#33b5b5" }}>{booking?.name}</strong>! Your
-            Aadhaar has been submitted successfully. We'll verify and get back
-            to you.
+            documents have been submitted successfully. We'll verify and get
+            back to you.
           </p>
         </div>
       </div>
@@ -175,6 +204,12 @@ export default function UploadDocs() {
     const [y, m, dd] = d.split("-");
     return `${dd}/${m}/${y}`;
   };
+
+  const guestCount = guestFiles.length;
+  const current = guestFiles[activeTab] || {};
+
+  // Progress: how many guests have both docs
+  const completedGuests = guestFiles.filter((g) => g.front && g.back).length;
 
   return (
     <div style={styles.page}>
@@ -200,7 +235,7 @@ export default function UploadDocs() {
             Upload Documents
           </h1>
           <p style={{ color: "#555", fontSize: "13px", marginTop: "4px" }}>
-            Aadhaar card required for check-in verification
+            Gov approved document required for check-in verification
           </p>
         </div>
 
@@ -254,18 +289,91 @@ export default function UploadDocs() {
           </div>
         </div>
 
+        {/* Guest Tabs */}
+        {guestCount > 1 && (
+          <div
+            style={{
+              display: "flex",
+              gap: "8px",
+              marginBottom: "16px",
+              overflowX: "auto",
+              paddingBottom: "2px",
+            }}
+          >
+            {guestFiles.map((g, i) => {
+              const isActive = activeTab === i;
+              const isDone = g.front && g.back;
+              return (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setActiveTab(i);
+                    setError("");
+                  }}
+                  style={{
+                    flex: "0 0 auto",
+                    padding: "8px 16px",
+                    borderRadius: "8px",
+                    border: isActive
+                      ? "1px solid rgba(0,128,128,0.6)"
+                      : "1px solid #1e1e1e",
+                    background: isActive
+                      ? "rgba(0,128,128,0.15)"
+                      : "#111",
+                    color: isActive ? "#33b5b5" : "#555",
+                    fontSize: "13px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {isDone && (
+                    <span style={{ fontSize: "12px", color: "#22c55e" }}>
+                      ✓
+                    </span>
+                  )}
+                  Guest {i + 1}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Progress hint */}
+        {guestCount > 1 && (
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#444",
+              marginBottom: "14px",
+              textAlign: "center",
+            }}
+          >
+            {completedGuests} of {guestCount} guests completed
+          </p>
+        )}
+
         {/* Upload Sections */}
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {/* Front */}
           <UploadBox
-            label="Aadhaar Front *"
-            preview={frontPreview}
+            label={
+              guestCount > 1
+                ? `Guest ${activeTab + 1} — Document Front *`
+                : "Document Front *"
+            }
+            preview={current.frontPreview}
             onChange={(e) => pickFile(e, "front")}
           />
-          {/* Back */}
           <UploadBox
-            label="Aadhaar Back *"
-            preview={backPreview}
+            label={
+              guestCount > 1
+                ? `Guest ${activeTab + 1} — Document Back (optional)`
+                : "Document Back (optional)"
+            }
+            preview={current.backPreview}
             onChange={(e) => pickFile(e, "back")}
           />
         </div>
