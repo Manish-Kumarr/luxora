@@ -95,6 +95,7 @@ const BLANK_EDIT = {
   commissionType: "fixed",
   custom_room_price: "",
   useCustomPrice: false,
+  custom_price_type: "per_day",
 };
 const BLANK_PAY = { amount: "", method: "Cash", type: "Advance", note: "" };
 
@@ -155,7 +156,9 @@ export default function Bookings({ isMobile }) {
         : 0;
     const roomRaw =
       b.custom_room_price != null
-        ? Number(b.custom_room_price) * nights
+        ? b.custom_price_type === "full"
+          ? Number(b.custom_room_price)
+          : Number(b.custom_room_price) * nights
         : calcRoomCost(b.check_in, b.check_out);
     const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
     const totalDiscountPct = (b.discount || 0) + (b.promo_discount || 0);
@@ -302,6 +305,7 @@ export default function Bookings({ isMobile }) {
         createForm.useCustomPrice && createForm.custom_room_price
           ? Number(createForm.custom_room_price)
           : null,
+      custom_price_type: createForm.useCustomPrice ? createForm.custom_price_type : null,
       broker_name: createForm.broker_name?.trim() || null,
       broker_phone: createForm.broker_phone?.trim() || null,
       broker_commission: (() => {
@@ -459,6 +463,7 @@ export default function Bookings({ isMobile }) {
       custom_room_price:
         b.custom_room_price != null ? String(b.custom_room_price) : "",
       useCustomPrice: b.custom_room_price != null,
+      custom_price_type: b.custom_price_type || "per_day",
     });
   };
 
@@ -477,6 +482,7 @@ export default function Bookings({ isMobile }) {
       guests_count: Number(editForm.guests_count),
       notes: editForm.notes,
       custom_room_price: effectiveCustomPrice,
+      custom_price_type: editForm.useCustomPrice ? editForm.custom_price_type : null,
       broker_name: editForm.useCustomPrice
         ? editForm.broker_name.trim() || null
         : null,
@@ -1263,8 +1269,8 @@ export default function Bookings({ isMobile }) {
         filteredBookings.map((b) => {
           const s = STATUS_COLORS[b.status] || STATUS_COLORS.pending;
           const isReturning = (phoneCounts[b.phone] || 0) > 1;
-          const checkoutToday = b.check_out === todayStr;
-          const checkoutTomorrow = b.check_out === tomorrowStr;
+          const checkoutToday = b.check_out === todayStr && b.status !== "checked-out";
+          const checkoutTomorrow = b.check_out === tomorrowStr && b.status !== "checked-out";
           const totalAddonCost = (b.addons || []).reduce(
             (sum, a) => sum + (a.price || 0),
             0
@@ -3111,6 +3117,41 @@ export default function Bookings({ isMobile }) {
                     }}
                   >
                     <div>
+                      {/* Price Type Toggle */}
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          marginBottom: "10px",
+                        }}
+                      >
+                        {["per_day", "full"].map((type) => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() =>
+                              setCreateForm({
+                                ...createForm,
+                                custom_price_type: type,
+                              })
+                            }
+                            style={{
+                              flex: 1,
+                              padding: "7px 0",
+                              borderRadius: "7px",
+                              border: `1px solid ${createForm.custom_price_type === type ? "#a855f7" : "#2a2a2a"}`,
+                              background: createForm.custom_price_type === type ? "rgba(168,85,247,0.15)" : "#141414",
+                              color: createForm.custom_price_type === type ? "#c084fc" : "#666",
+                              fontSize: "12px",
+                              fontWeight: "600",
+                              cursor: "pointer",
+                              letterSpacing: "0.04em",
+                            }}
+                          >
+                            {type === "per_day" ? "Per Day" : "Full Amount"}
+                          </button>
+                        ))}
+                      </div>
                       <p
                         style={{
                           fontSize: "11px",
@@ -3119,7 +3160,9 @@ export default function Bookings({ isMobile }) {
                           fontWeight: "500",
                         }}
                       >
-                        Price per night (₹) *
+                        {createForm.custom_price_type === "full"
+                          ? "Total amount (₹) *"
+                          : "Price per night (₹) *"}
                       </p>
                       <input
                         type="number"
@@ -3130,7 +3173,7 @@ export default function Bookings({ isMobile }) {
                             custom_room_price: e.target.value,
                           })
                         }
-                        placeholder="e.g. 2000"
+                        placeholder={createForm.custom_price_type === "full" ? "e.g. 10000" : "e.g. 2000"}
                         style={inputStyle}
                       />
                     </div>
@@ -3730,6 +3773,41 @@ export default function Bookings({ isMobile }) {
                       }}
                     >
                       <div>
+                        {/* Price Type Toggle */}
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "8px",
+                            marginBottom: "10px",
+                          }}
+                        >
+                          {["per_day", "full"].map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() =>
+                                setEditForm({
+                                  ...editForm,
+                                  custom_price_type: type,
+                                })
+                              }
+                              style={{
+                                flex: 1,
+                                padding: "7px 0",
+                                borderRadius: "7px",
+                                border: `1px solid ${editForm.custom_price_type === type ? "#a855f7" : "#2a2a2a"}`,
+                                background: editForm.custom_price_type === type ? "rgba(168,85,247,0.15)" : "#141414",
+                                color: editForm.custom_price_type === type ? "#c084fc" : "#666",
+                                fontSize: "12px",
+                                fontWeight: "600",
+                                cursor: "pointer",
+                                letterSpacing: "0.04em",
+                              }}
+                            >
+                              {type === "per_day" ? "Per Day" : "Full Amount"}
+                            </button>
+                          ))}
+                        </div>
                         <p
                           style={{
                             fontSize: "11px",
@@ -3738,7 +3816,9 @@ export default function Bookings({ isMobile }) {
                             fontWeight: "500",
                           }}
                         >
-                          Price per night (₹) *
+                          {editForm.custom_price_type === "full"
+                            ? "Total amount (₹) *"
+                            : "Price per night (₹) *"}
                         </p>
                         <input
                           type="number"
@@ -3749,7 +3829,7 @@ export default function Bookings({ isMobile }) {
                               custom_room_price: e.target.value,
                             })
                           }
-                          placeholder="e.g. 2000"
+                          placeholder={editForm.custom_price_type === "full" ? "e.g. 10000" : "e.g. 2000"}
                           style={{
                             width: "100%",
                             background: "#141414",
@@ -4081,16 +4161,33 @@ export default function Bookings({ isMobile }) {
             >
               {/* Amount */}
               <div>
-                <p
-                  style={{
-                    fontSize: "11px",
-                    color: "#555",
-                    marginBottom: "5px",
-                    fontWeight: "500",
-                  }}
-                >
-                  Amount (₹) *
-                </p>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "5px" }}>
+                  <p style={{ fontSize: "11px", color: "#555", fontWeight: "500" }}>
+                    Amount (₹) *
+                  </p>
+                  {(() => {
+                    const booking = bookings.find((b) => b.id === payModalId);
+                    const remaining = booking ? Math.max(0, getBookingFinancials(booking).balance) : 0;
+                    return remaining > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setPayForm({ ...payForm, amount: String(remaining) })}
+                        style={{
+                          background: "rgba(168,85,247,0.12)",
+                          border: "1px solid rgba(168,85,247,0.35)",
+                          borderRadius: "6px",
+                          padding: "3px 8px",
+                          color: "#c084fc",
+                          fontSize: "11px",
+                          fontWeight: "600",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Remaining ₹{remaining.toLocaleString("en-IN")}
+                      </button>
+                    ) : null;
+                  })()}
+                </div>
                 <input
                   type="number"
                   placeholder="0"
