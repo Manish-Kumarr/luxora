@@ -115,6 +115,7 @@ export default function Bookings({ isMobile }) {
     promoCodes,
     applyPromoToBooking,
     markBrokerCommissionPaid,
+    owners,
   } = useApp();
 
   const [promoBookingId, setPromoBookingId] = useState(null);
@@ -155,11 +156,13 @@ export default function Bookings({ isMobile }) {
         ? Math.max(0, (new Date(b.check_out) - new Date(b.check_in)) / 86400000)
         : 0;
     const roomRaw =
-      b.custom_room_price != null
-        ? b.custom_price_type === "full"
-          ? Number(b.custom_room_price)
-          : Number(b.custom_room_price) * nights
-        : calcRoomCost(b.check_in, b.check_out);
+      b.is_owner_stay
+        ? Number(b.owner_stay_value) || calcRoomCost(b.check_in, b.check_out)
+        : b.custom_room_price != null
+          ? b.custom_price_type === "full"
+            ? Number(b.custom_room_price)
+            : Number(b.custom_room_price) * nights
+          : calcRoomCost(b.check_in, b.check_out);
     const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
     const totalDiscountPct = (b.discount || 0) + (b.promo_discount || 0);
     const discountAmt = Math.min(
@@ -270,12 +273,59 @@ export default function Bookings({ isMobile }) {
     guests_count: 1,
     notes: "",
     status: "confirmed",
+    is_owner_stay: false,
+    staying_owner_ids: [],
+    owner_stay_value: "",
   });
   const [createAddons, setCreateAddons] = useState([]);
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
   const handleCreate = async () => {
     setCreateError("");
+    if (createForm.is_owner_stay) {
+      if (createForm.staying_owner_ids.length === 0)
+        return setCreateError("Select at least one owner who stayed.");
+      if (!createForm.check_in) return setCreateError("Check-in date is required.");
+      if (!createForm.check_out) return setCreateError("Check-out date is required.");
+      if (createForm.check_out <= createForm.check_in)
+        return setCreateError("Check-out must be after check-in.");
+      setCreateSaving(true);
+      const stayingNames = owners
+        .filter((o) => createForm.staying_owner_ids.includes(o.id))
+        .map((o) => o.name)
+        .join(", ");
+      const ownerStayValue = createForm.owner_stay_value
+        ? Number(createForm.owner_stay_value)
+        : calcRoomCost(createForm.check_in, createForm.check_out);
+      const { error } = await addBooking({
+        name: `Owner Stay – ${stayingNames}`,
+        phone: "0000000000",
+        email: "",
+        check_in: createForm.check_in,
+        check_out: createForm.check_out,
+        guests_count: createForm.staying_owner_ids.length,
+        notes: createForm.notes.trim(),
+        status: "confirmed",
+        addons: [],
+        docs_status: "na",
+        discount: 0,
+        custom_room_price: null,
+        custom_price_type: null,
+        broker_name: null,
+        broker_phone: null,
+        broker_commission: null,
+        broker_commission_paid: false,
+        is_owner_stay: true,
+        staying_owner_ids: createForm.staying_owner_ids,
+        owner_stay_value: ownerStayValue,
+      });
+      setCreateSaving(false);
+      if (error) return setCreateError(error.message);
+      setShowCreate(false);
+      setCreateForm({ name: "", phone: "", email: "", check_in: "", check_out: "", guests_count: 1, notes: "", status: "confirmed", is_owner_stay: false, staying_owner_ids: [], owner_stay_value: "" });
+      setCreateAddons([]);
+      return;
+    }
     if (!createForm.name.trim()) return setCreateError("Name is required.");
     if (!createForm.phone.trim()) return setCreateError("Phone is required.");
     if (createForm.phone.replace(/\D/g, "").length !== 10)
@@ -323,6 +373,9 @@ export default function Bookings({ isMobile }) {
         return Number(createForm.broker_commission);
       })(),
       broker_commission_paid: false,
+      is_owner_stay: false,
+      staying_owner_ids: [],
+      owner_stay_value: 0,
     });
     setCreateSaving(false);
     if (error) return setCreateError(error.message);
@@ -336,6 +389,9 @@ export default function Bookings({ isMobile }) {
       guests_count: 1,
       notes: "",
       status: "confirmed",
+      is_owner_stay: false,
+      staying_owner_ids: [],
+      owner_stay_value: "",
     });
     setCreateAddons([]);
   };
@@ -343,6 +399,7 @@ export default function Bookings({ isMobile }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [bookingTypeFilter, setBookingTypeFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -387,6 +444,8 @@ export default function Bookings({ isMobile }) {
     if (statusFilter !== "all" && b.status !== statusFilter) return false;
     if (sourceFilter === "broker" && !b.broker_name) return false;
     if (sourceFilter === "direct" && b.broker_name) return false;
+    if (bookingTypeFilter === "owner" && !b.is_owner_stay) return false;
+    if (bookingTypeFilter === "normal" && b.is_owner_stay) return false;
     const d = b.created_at ? b.created_at.slice(0, 10) : "";
     if (dateRange.from && d < dateRange.from) return false;
     if (dateRange.to && d > dateRange.to) return false;
@@ -394,7 +453,7 @@ export default function Bookings({ isMobile }) {
   });
 
   const isFiltered =
-    search.trim() || statusFilter !== "all" || sourceFilter !== "all" || dateFilter !== "all";
+    search.trim() || statusFilter !== "all" || sourceFilter !== "all" || bookingTypeFilter !== "all" || dateFilter !== "all";
 
   // ── Stats ──
   const todayStr = new Date().toISOString().split("T")[0];
@@ -773,6 +832,33 @@ export default function Bookings({ isMobile }) {
               <option value="all">All Sources</option>
               <option value="direct">Direct</option>
               <option value="broker">Broker</option>
+            </select>
+            <ChevronDown size={13} color="#555" style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          </div>
+
+          {/* Booking type filter */}
+          <div style={{ position: "relative" }}>
+            <select
+              value={bookingTypeFilter}
+              onChange={(e) => setBookingTypeFilter(e.target.value)}
+              style={{
+                appearance: "none",
+                WebkitAppearance: "none",
+                background: "#111",
+                border: "1px solid #2a2a2a",
+                borderRadius: "8px",
+                padding: "8px 32px 8px 12px",
+                color: bookingTypeFilter === "all" ? "#555" : "#c084fc",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                outline: "none",
+                colorScheme: "dark",
+              }}
+            >
+              <option value="all">All Bookings</option>
+              <option value="normal">Guest Only</option>
+              <option value="owner">Owner Stay</option>
             </select>
             <ChevronDown size={13} color="#555" style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
           </div>
@@ -1208,15 +1294,22 @@ export default function Bookings({ isMobile }) {
                             {b.name?.[0]?.toUpperCase() || "?"}
                           </div>
                           <div>
-                            <p
-                              style={{
-                                fontWeight: "700",
-                                color: "#f0f0f0",
-                                fontSize: "14px",
-                              }}
-                            >
-                              {b.name}
-                            </p>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                              <p
+                                style={{
+                                  fontWeight: "700",
+                                  color: "#f0f0f0",
+                                  fontSize: "14px",
+                                }}
+                              >
+                                {b.name}
+                              </p>
+                              {b.is_owner_stay && (
+                                <span style={{ fontSize: "10px", fontWeight: "700", color: "#c084fc", background: "rgba(168,85,247,0.12)", border: "1px solid rgba(168,85,247,0.3)", borderRadius: "4px", padding: "1px 6px" }}>
+                                  OWNER
+                                </span>
+                              )}
+                            </div>
                             <p style={{ fontSize: "12px", color: "#555" }}>
                               {b.phone} · {fmt(b.check_in)} → {fmt(b.check_out)}
                             </p>
@@ -1356,30 +1449,32 @@ export default function Bookings({ isMobile }) {
                       >
                         {b.name}
                       </p>
-                      <span
-                        style={{
-                          fontSize: "10px",
-                          fontWeight: "600",
-                          padding: "2px 8px",
-                          borderRadius: "20px",
-                          background:
-                            b.docs_status === "received"
-                              ? "rgba(16,185,129,0.12)"
-                              : "rgba(245,158,11,0.12)",
-                          border:
-                            b.docs_status === "received"
-                              ? "1px solid rgba(16,185,129,0.3)"
-                              : "1px solid rgba(245,158,11,0.3)",
-                          color:
-                            b.docs_status === "received"
-                              ? "#10b981"
-                              : "#f59e0b",
-                        }}
-                      >
-                        {b.docs_status === "received"
-                          ? "Docs ✓"
-                          : "Docs Pending"}
-                      </span>
+                      {!b.is_owner_stay && (
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            fontWeight: "600",
+                            padding: "2px 8px",
+                            borderRadius: "20px",
+                            background:
+                              b.docs_status === "received"
+                                ? "rgba(16,185,129,0.12)"
+                                : "rgba(245,158,11,0.12)",
+                            border:
+                              b.docs_status === "received"
+                                ? "1px solid rgba(16,185,129,0.3)"
+                                : "1px solid rgba(245,158,11,0.3)",
+                            color:
+                              b.docs_status === "received"
+                                ? "#10b981"
+                                : "#f59e0b",
+                          }}
+                        >
+                          {b.docs_status === "received"
+                            ? "Docs ✓"
+                            : "Docs Pending"}
+                        </span>
+                      )}
                       {isReturning && (
                         <span style={{ fontSize: "10px", fontWeight: "700", padding: "2px 8px", borderRadius: "20px", background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.3)", color: "#8b5cf6" }}>
                           Returning
@@ -1448,7 +1543,7 @@ export default function Bookings({ isMobile }) {
                       </option>
                     ))}
                   </select>
-                  {b.docs_status === "received" ? (
+                  {!b.is_owner_stay && (b.docs_status === "received" ? (
                     <button
                       onClick={() =>
                         setDocsModal({ ...getDocUrls(b.id, b.guests_count || 1), bookingId: b.id, activeGuest: 0 })
@@ -1492,8 +1587,8 @@ export default function Bookings({ isMobile }) {
                     >
                       <MessageCircle size={15} />
                     </button>
-                  )}
-                  {b.docs_status !== "received" && (
+                  ))}
+                  {!b.is_owner_stay && b.docs_status !== "received" && (
                     <button
                       onClick={() =>
                         window.open(
@@ -1937,11 +2032,15 @@ export default function Bookings({ isMobile }) {
                             background:
                               fin.balance <= 0
                                 ? "rgba(16,185,129,0.08)"
-                                : "rgba(239,68,68,0.08)",
+                                : b.is_owner_stay
+                                  ? "rgba(168,85,247,0.08)"
+                                  : "rgba(239,68,68,0.08)",
                             border: `1px solid ${
                               fin.balance <= 0
                                 ? "rgba(16,185,129,0.25)"
-                                : "rgba(239,68,68,0.25)"
+                                : b.is_owner_stay
+                                  ? "rgba(168,85,247,0.25)"
+                                  : "rgba(239,68,68,0.25)"
                             }`,
                             borderRadius: "7px",
                             padding: "7px 10px",
@@ -1950,16 +2049,16 @@ export default function Bookings({ isMobile }) {
                         >
                           <span
                             style={{
-                              color: fin.balance <= 0 ? "#10b981" : "#ef4444",
+                              color: fin.balance <= 0 ? "#10b981" : b.is_owner_stay ? "#c084fc" : "#ef4444",
                               fontWeight: "700",
                               fontSize: "13px",
                             }}
                           >
-                            {fin.balance <= 0 ? "Cleared" : "Balance Due"}
+                            {fin.balance <= 0 ? "Cleared" : b.is_owner_stay ? "Adjusts in Settlement" : "Balance Due"}
                           </span>
                           <span
                             style={{
-                              color: fin.balance <= 0 ? "#10b981" : "#ef4444",
+                              color: fin.balance <= 0 ? "#10b981" : b.is_owner_stay ? "#c084fc" : "#ef4444",
                               fontWeight: "800",
                               fontSize: "14px",
                             }}
@@ -2815,90 +2914,142 @@ export default function Bookings({ isMobile }) {
                 overflowY: "auto",
               }}
             >
-              {/* Name + Phone */}
+              {/* Owner Stay Toggle */}
               <div
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-                  gap: "12px",
+                  padding: "12px 14px",
+                  background: createForm.is_owner_stay ? "rgba(168,85,247,0.08)" : "#1a1a1a",
+                  border: `1px solid ${createForm.is_owner_stay ? "rgba(168,85,247,0.4)" : "#2a2a2a"}`,
+                  borderRadius: "8px",
                 }}
               >
-                <div>
-                  <p
-                    style={{
-                      fontSize: "11px",
-                      color: "#555",
-                      marginBottom: "5px",
-                      fontWeight: "500",
-                    }}
-                  >
-                    Guest Name *
-                  </p>
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
                   <input
-                    value={createForm.name}
+                    type="checkbox"
+                    checked={!!createForm.is_owner_stay}
                     onChange={(e) =>
-                      setCreateForm({ ...createForm, name: e.target.value })
+                      setCreateForm({ ...createForm, is_owner_stay: e.target.checked, staying_owner_ids: [] })
                     }
-                    placeholder="Full name"
-                    style={inputStyle}
+                    style={{ width: "15px", height: "15px", accentColor: "#a855f7", cursor: "pointer" }}
                   />
-                </div>
-                <div>
-                  <p
-                    style={{
-                      fontSize: "11px",
-                      color: "#555",
-                      marginBottom: "5px",
-                      fontWeight: "500",
-                    }}
-                  >
-                    Phone *
-                  </p>
-                  <input
-                    value={createForm.phone}
-                    onChange={(e) => {
-                      setCreateForm({ ...createForm, phone: e.target.value });
-                      setCreateError("");
-                    }}
-                    placeholder="+91 00000 00000"
-                    style={inputStyle}
-                  />
-                  {createError === "Phone must be 10 digits." && (
-                    <p
-                      style={{
-                        fontSize: "11px",
-                        color: "#ef4444",
-                        marginTop: "4px",
-                      }}
-                    >
-                      Phone must be 10 digits.
+                  <span style={{ fontSize: "13px", color: createForm.is_owner_stay ? "#c084fc" : "#ccc", fontWeight: "600" }}>
+                    Owner Stay (auto-adjusted in settlement)
+                  </span>
+                </label>
+                {createForm.is_owner_stay && owners.length > 0 && (
+                  <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <p style={{ fontSize: "11px", color: "#888", fontWeight: "600", letterSpacing: "0.05em" }}>
+                      WHO STAYED? (select owners)
                     </p>
-                  )}
-                </div>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      {owners.map((o) => {
+                        const selected = createForm.staying_owner_ids.includes(o.id);
+                        return (
+                          <button
+                            key={o.id}
+                            type="button"
+                            onClick={() => {
+                              setCreateForm((f) => ({
+                                ...f,
+                                staying_owner_ids: selected
+                                  ? f.staying_owner_ids.filter((id) => id !== o.id)
+                                  : [...f.staying_owner_ids, o.id],
+                              }));
+                            }}
+                            style={{
+                              padding: "6px 14px",
+                              borderRadius: "20px",
+                              border: `1.5px solid ${selected ? (o.color || "#a855f7") : "#2a2a2a"}`,
+                              background: selected ? (o.color || "#a855f7") + "22" : "#141414",
+                              color: selected ? (o.color || "#c084fc") : "#666",
+                              fontSize: "13px",
+                              fontWeight: "600",
+                              cursor: "pointer",
+                            }}
+                          >
+                            {o.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ marginTop: "4px" }}>
+                      <p style={{ fontSize: "11px", color: "#888", fontWeight: "600", marginBottom: "5px" }}>
+                        Room Value (₹)
+                      </p>
+                      <div style={{ position: "relative" }}>
+                        <input
+                          type="number"
+                          value={createForm.owner_stay_value}
+                          onChange={(e) => setCreateForm((f) => ({ ...f, owner_stay_value: e.target.value }))}
+                          placeholder={
+                            createForm.check_in && createForm.check_out && createForm.check_out > createForm.check_in
+                              ? `Auto: ₹${calcRoomCost(createForm.check_in, createForm.check_out).toLocaleString("en-IN")}`
+                              : "Enter room value"
+                          }
+                          style={{ ...inputStyle, borderColor: "#3a2a5a", background: "#1a1228" }}
+                        />
+                        {createForm.check_in && createForm.check_out && createForm.check_out > createForm.check_in && !createForm.owner_stay_value && (
+                          <span style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", fontSize: "11px", color: "#7c3aed", fontWeight: "600", pointerEvents: "none" }}>
+                            auto
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ fontSize: "11px", color: "#555", marginTop: "4px" }}>
+                        Leave blank to use calculated rate · will be adjusted in settlement
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Email */}
-              <div>
-                <p
-                  style={{
-                    fontSize: "11px",
-                    color: "#555",
-                    marginBottom: "5px",
-                    fontWeight: "500",
-                  }}
-                >
-                  Email
-                </p>
-                <input
-                  type="email"
-                  value={createForm.email}
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, email: e.target.value })
-                  }
-                  placeholder="guest@email.com"
-                  style={inputStyle}
-                />
-              </div>
+              {/* Name + Phone (hidden for owner stay) */}
+              {!createForm.is_owner_stay && (
+                <>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                      gap: "12px",
+                    }}
+                  >
+                    <div>
+                      <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>
+                        Guest Name *
+                      </p>
+                      <input
+                        value={createForm.name}
+                        onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                        placeholder="Full name"
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div>
+                      <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>
+                        Phone *
+                      </p>
+                      <input
+                        value={createForm.phone}
+                        onChange={(e) => { setCreateForm({ ...createForm, phone: e.target.value }); setCreateError(""); }}
+                        placeholder="+91 00000 00000"
+                        style={inputStyle}
+                      />
+                      {createError === "Phone must be 10 digits." && (
+                        <p style={{ fontSize: "11px", color: "#ef4444", marginTop: "4px" }}>Phone must be 10 digits.</p>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>Email</p>
+                    <input
+                      type="email"
+                      value={createForm.email}
+                      onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+                      placeholder="guest@email.com"
+                      style={inputStyle}
+                    />
+                  </div>
+                </>
+              )}
 
               {/* Check-in / Check-out */}
               {(() => {
@@ -5081,13 +5232,38 @@ export default function Bookings({ isMobile }) {
                 : "Check-out Confirm?"}
             </p>
             <p
-              style={{ color: "#555", fontSize: "13px", marginBottom: "24px" }}
+              style={{ color: "#555", fontSize: "13px", marginBottom: statusConfirm.status === "checked-out" ? "12px" : "24px" }}
             >
               Are you sure you want to{" "}
               {statusConfirm.status === "checked-in" ? "check-in" : "check-out"}{" "}
               <strong style={{ color: "#e0e0e0" }}>{statusConfirm.name}</strong>
               ? The exact time will be saved.
             </p>
+            {statusConfirm.status === "checked-out" && (() => {
+              const booking = bookings.find((b) => b.id === statusConfirm.bookingId);
+              const fin = booking ? getBookingFinancials(booking) : null;
+              if (!fin || fin.balance <= 0) return null;
+              return (
+                <div style={{
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.3)",
+                  borderRadius: "10px",
+                  padding: "12px 16px",
+                  marginBottom: "20px",
+                  textAlign: "left",
+                }}>
+                  <p style={{ fontSize: "12px", color: "#ef4444", fontWeight: "700", marginBottom: "4px" }}>
+                    Pending Balance Due
+                  </p>
+                  <p style={{ fontSize: "20px", fontWeight: "800", color: "#ef4444" }}>
+                    ₹{fin.balance.toLocaleString("en-IN")}
+                  </p>
+                  <p style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                    Total Due: ₹{fin.totalDue.toLocaleString("en-IN")} · Paid: ₹{fin.totalPaid.toLocaleString("en-IN")}
+                  </p>
+                </div>
+              );
+            })()}
             <div style={{ display: "flex", gap: "10px" }}>
               <button
                 onClick={() => setStatusConfirm(null)}

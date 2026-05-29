@@ -108,6 +108,35 @@ export default function Settlement({ isMobile }) {
     if (balances[t.to_owner_id] !== undefined) balances[t.to_owner_id] -= Number(t.amount);
   });
 
+  // Adjust balances for owner stays
+  // Staying owners consumed the room → non-staying owners lose their revenue share
+  // Staying owners owe non-staying owners proportionally
+  const ownerStayBookings = bookings.filter(
+    (b) => b.is_owner_stay && Array.isArray(b.staying_owner_ids) && b.staying_owner_ids.length > 0
+      && inRange(b.check_in)
+  );
+  ownerStayBookings.forEach((b) => {
+    const V = Number(b.owner_stay_value) || 0;
+    if (V <= 0) return;
+    const stayingIds = b.staying_owner_ids;
+    const nonStaying = owners.filter((o) => !stayingIds.includes(o.id));
+    const staying = owners.filter((o) => stayingIds.includes(o.id));
+    if (nonStaying.length === 0) return; // all owners stayed, no adjustment needed
+    const stayingTotalPct = staying.reduce((s, o) => s + Number(o.ownership_percent), 0);
+    // Non-staying owners ko milta hai unka revenue share
+    nonStaying.forEach((o) => {
+      if (balances[o.id] !== undefined) balances[o.id] += V * (Number(o.ownership_percent) / 100);
+    });
+    // Staying owners owe this amount proportionally among themselves
+    const totalOwed = nonStaying.reduce((s, o) => s + V * (Number(o.ownership_percent) / 100), 0);
+    staying.forEach((o) => {
+      if (balances[o.id] !== undefined) {
+        const share = stayingTotalPct > 0 ? totalOwed * (Number(o.ownership_percent) / stayingTotalPct) : 0;
+        balances[o.id] -= share;
+      }
+    });
+  });
+
   const transactions = calcSettlement({ ...balances });
   const allSettled = transactions.length === 0;
 
@@ -546,6 +575,64 @@ export default function Settlement({ isMobile }) {
           </div>
         )}
       </div>
+
+      {/* Owner Stay Adjustments */}
+      {ownerStayBookings.length > 0 && (
+        <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "14px", overflow: "hidden" }}>
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid #1e1e1e", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <h2 style={{ fontSize: "15px", fontWeight: "600", color: "#e0e0e0" }}>Owner Stay Adjustments</h2>
+              <p style={{ fontSize: "12px", color: "#555", marginTop: "3px" }}>Owner room stays adjusted in settlement</p>
+            </div>
+            <span style={{ fontSize: "12px", color: "#c084fc", fontWeight: "600" }}>
+              {ownerStayBookings.length} stay{ownerStayBookings.length > 1 ? "s" : ""}
+            </span>
+          </div>
+          <div style={{ padding: "8px 0" }}>
+            {ownerStayBookings.map((b, i) => {
+              const V = Number(b.owner_stay_value) || 0;
+              const stayingOwners = owners.filter((o) => (b.staying_owner_ids || []).includes(o.id));
+              const nonStaying = owners.filter((o) => !(b.staying_owner_ids || []).includes(o.id));
+              const nights = b.check_in && b.check_out
+                ? Math.max(0, (new Date(b.check_out) - new Date(b.check_in)) / 86400000)
+                : 0;
+              return (
+                <div key={b.id} style={{
+                  padding: isMobile ? "12px 16px" : "14px 20px",
+                  borderBottom: i < ownerStayBookings.length - 1 ? "1px solid #161616" : "none",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                        <span style={{ fontSize: "11px", fontWeight: "700", color: "#c084fc", background: "rgba(168,85,247,0.12)", border: "1px solid rgba(168,85,247,0.3)", borderRadius: "4px", padding: "2px 8px" }}>
+                          OWNER STAY
+                        </span>
+                        <span style={{ fontSize: "13px", color: "#e0e0e0", fontWeight: "600" }}>
+                          {stayingOwners.map((o) => o.name).join(", ")}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: "12px", color: "#555" }}>
+                        {b.check_in?.split("-").reverse().join("/")} → {b.check_out?.split("-").reverse().join("/")} · {nights} night{nights !== 1 ? "s" : ""}
+                      </p>
+                      {nonStaying.length > 0 && (
+                        <p style={{ fontSize: "12px", color: "#888", marginTop: "4px" }}>
+                          {nonStaying.map((o) => `${o.name} receives ₹${Math.round(V * Number(o.ownership_percent) / 100).toLocaleString("en-IN")}`).join(", ")}
+                        </p>
+                      )}
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <p style={{ fontSize: "16px", fontWeight: "700", color: "#c084fc" }}>
+                        ₹{V.toLocaleString("en-IN")}
+                      </p>
+                      <p style={{ fontSize: "11px", color: "#666" }}>room value</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Broker Payouts */}
       {(() => {

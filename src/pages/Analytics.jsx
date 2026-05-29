@@ -245,6 +245,18 @@ export default function Analytics({ isMobile }) {
   }, 0);
   const adr = totalBookedNights > 0 ? Math.round(totalRevenue / totalBookedNights) : 0;
 
+  // ── Owner Stay analytics ──────────────────────────
+  const ownerStayBookings = filteredBookings.filter((b) => b.is_owner_stay && Array.isArray(b.staying_owner_ids));
+  const ownerStayStats = owners.map((o) => {
+    const stays = ownerStayBookings.filter((b) => b.staying_owner_ids.includes(o.id));
+    const nights = stays.reduce((s, b) => {
+      if (!b.check_in || !b.check_out) return s;
+      return s + Math.max(0, Math.round((new Date(b.check_out) - new Date(b.check_in)) / 86400000));
+    }, 0);
+    const roomValue = stays.reduce((s, b) => s + (Number(b.owner_stay_value) || 0), 0);
+    return { owner: o, stays: stays.length, nights, roomValue };
+  }).filter((s) => s.stays > 0 || ownerStayBookings.length > 0);
+
   // ── Source breakdown (direct vs broker) ───────────
   const brokerBookingIds = new Set(bookings.filter(b => b.broker_name && Number(b.broker_commission) > 0).map(b => b.id));
   const brokerRevenue = filteredPayments.filter(p => brokerBookingIds.has(p.booking_id)).reduce((s, p) => s + (p.amount || 0), 0);
@@ -1054,6 +1066,80 @@ export default function Analytics({ isMobile }) {
                 </div>
               );
             })()}
+          </div>
+        </>
+      )}
+
+      {/* ── Owner Stay Analytics ── */}
+      {ownerStayBookings.length > 0 && (
+        <>
+          <SectionTitle>OWNER STAYS</SectionTitle>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : `repeat(${Math.min(owners.length, 3)}, 1fr)`, gap: isMobile ? "10px" : "14px" }}>
+            {ownerStayStats.map(({ owner, stays, nights, roomValue }) => {
+              const color = owner.color || "#a855f7";
+              const initials = owner.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+              return (
+                <div key={owner.id} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", padding: isMobile ? "14px" : "18px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+                    <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: color + "22", border: `1.5px solid ${color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", fontWeight: "700", color, overflow: "hidden", flexShrink: 0 }}>
+                      {owner.image_url ? <img src={owner.image_url} alt={owner.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
+                    </div>
+                    <p style={{ fontSize: "15px", fontWeight: "700", color: "#e0e0e0" }}>{owner.name}</p>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {[
+                      { label: "Times Stayed", value: stays },
+                      { label: "Total Nights", value: nights },
+                      { label: "Room Value", value: fmt(roomValue) },
+                    ].map(({ label, value }) => (
+                      <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: "12px", color: "#555" }}>{label}</span>
+                        <span style={{ fontSize: "14px", fontWeight: "700", color }}>{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Owner stay timeline */}
+          <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "12px", overflow: "hidden" }}>
+            <div style={{ padding: "14px 18px", borderBottom: "1px solid #1e1e1e" }}>
+              <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>Owner Stay History</p>
+            </div>
+            <div style={{ padding: "8px 0" }}>
+              {ownerStayBookings.map((b, i) => {
+                const stayingOwners = owners.filter((o) => b.staying_owner_ids.includes(o.id));
+                const nights = b.check_in && b.check_out
+                  ? Math.max(0, Math.round((new Date(b.check_out) - new Date(b.check_in)) / 86400000))
+                  : 0;
+                return (
+                  <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "10px 14px" : "12px 18px", borderBottom: i < ownerStayBookings.length - 1 ? "1px solid #161616" : "none", gap: "12px", flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      {stayingOwners.map((o) => {
+                        const color = o.color || "#a855f7";
+                        const initials = o.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+                        return (
+                          <div key={o.id} style={{ width: "28px", height: "28px", borderRadius: "8px", background: color + "22", border: `1px solid ${color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color, overflow: "hidden" }}>
+                            {o.image_url ? <img src={o.image_url} alt={o.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
+                          </div>
+                        );
+                      })}
+                      <div>
+                        <p style={{ fontSize: "13px", fontWeight: "600", color: "#e0e0e0" }}>{stayingOwners.map((o) => o.name).join(", ")}</p>
+                        <p style={{ fontSize: "11px", color: "#555" }}>
+                          {b.check_in?.split("-").reverse().join("/")} → {b.check_out?.split("-").reverse().join("/")} · {nights} night{nights !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: "14px", fontWeight: "700", color: "#c084fc" }}>
+                      {fmt(Number(b.owner_stay_value) || 0)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </>
       )}

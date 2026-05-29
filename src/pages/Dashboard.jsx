@@ -203,7 +203,7 @@ export default function Dashboard({ isMobile }) {
 
   // ── Outstanding balances ──
   const outstandingBookings = bookings
-    .filter((b) => b.status === "confirmed" || b.status === "checked-in")
+    .filter((b) => (b.status === "confirmed" || b.status === "checked-in") && !b.is_owner_stay)
     .map((b) => {
       const bPayments = payments.filter((p) => p.booking_id === b.id);
       const paid = bPayments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -243,6 +243,7 @@ export default function Dashboard({ isMobile }) {
   // ── Docs pending ──
   const docsPendingBookings = bookings.filter(
     (b) =>
+      !b.is_owner_stay &&
       (b.status === "confirmed" || b.status === "checked-in") &&
       (!b.docs_status || b.docs_status === "pending")
   );
@@ -255,6 +256,7 @@ export default function Dashboard({ isMobile }) {
   const upcomingBalanceDue = bookings
     .filter((b) => {
       if (b.status === "cancelled") return false;
+      if (b.is_owner_stay) return false;
       if (!b.check_in) return false;
       const ci = new Date(b.check_in);
       ci.setHours(0, 0, 0, 0);
@@ -326,18 +328,45 @@ export default function Dashboard({ isMobile }) {
   // ── Settlement Summary ──
   const settleBalances = {};
   owners.forEach((o) => { settleBalances[o.id] = 0; });
-  expenses.forEach((e) => {
-    if (!e.paid_amounts) return;
-    const perPerson = (e.totalAmount || 0) / owners.length;
-    owners.forEach((o) => {
-      const paid = Number(e.paid_amounts[o.id] || 0);
-      settleBalances[o.id] += paid - perPerson;
-    });
+
+  // Step 1: expense fair share by ownership %
+  const totalExpensesAll = expenses.reduce((s, e) => s + (e.totalAmount || 0), 0);
+  const settlePaid = {};
+  owners.forEach((o) => {
+    settlePaid[o.id] = expenses.reduce((s, e) => s + (Number((e.paid_amounts || {})[o.id]) || 0), 0);
   });
+  owners.forEach((o) => {
+    const fairShare = totalExpensesAll * (Number(o.ownership_percent) / 100);
+    settleBalances[o.id] = settlePaid[o.id] - fairShare;
+  });
+
+  // Step 2: member transfers
   (memberTransfers || []).forEach((t) => {
     if (settleBalances[t.from_owner_id] !== undefined) settleBalances[t.from_owner_id] += Number(t.amount);
     if (settleBalances[t.to_owner_id] !== undefined) settleBalances[t.to_owner_id] -= Number(t.amount);
   });
+
+  // Step 3: owner stay adjustments
+  bookings
+    .filter((b) => b.is_owner_stay && Array.isArray(b.staying_owner_ids) && b.staying_owner_ids.length > 0)
+    .forEach((b) => {
+      const V = Number(b.owner_stay_value) || 0;
+      if (V <= 0) return;
+      const nonStaying = owners.filter((o) => !b.staying_owner_ids.includes(o.id));
+      const staying = owners.filter((o) => b.staying_owner_ids.includes(o.id));
+      if (nonStaying.length === 0) return;
+      const stayingTotalPct = staying.reduce((s, o) => s + Number(o.ownership_percent), 0);
+      nonStaying.forEach((o) => {
+        if (settleBalances[o.id] !== undefined) settleBalances[o.id] += V * (Number(o.ownership_percent) / 100);
+      });
+      const totalOwed = nonStaying.reduce((s, o) => s + V * (Number(o.ownership_percent) / 100), 0);
+      staying.forEach((o) => {
+        if (settleBalances[o.id] !== undefined) {
+          settleBalances[o.id] -= stayingTotalPct > 0 ? totalOwed * (Number(o.ownership_percent) / stayingTotalPct) : 0;
+        }
+      });
+    });
+
   const settleTxns = calcSettlement(settleBalances);
   const ownerById = Object.fromEntries(owners.map((o) => [o.id, o]));
 
