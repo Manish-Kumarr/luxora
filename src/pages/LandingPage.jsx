@@ -418,11 +418,6 @@ const FEATURES = [
     desc: "Aadhaar-verified check-in, 24/7 support, and a trusted home environment.",
   },
   {
-    icon: "🛵",
-    title: "Local Transport",
-    desc: "Bike, scooter, or car rental arranged at your convenience.",
-  },
-  {
     icon: "✨",
     title: "Premium Add-ons",
     desc: "Room decoration to grocery stocking — curated extras for every need.",
@@ -434,7 +429,6 @@ const ADDONS = [
   { icon: "🍽️", label: "Breakfast" },
   { icon: "👕", label: "Laundry" },
   { icon: "🛵", label: "Bike Rental" },
-  { icon: "🗺️", label: "Local Tour" },
   { icon: "🎉", label: "Room Decoration" },
   { icon: "💻", label: "WFH Setup" },
   { icon: "🛒", label: "Grocery Stocking" },
@@ -447,7 +441,7 @@ const STATS = [
   { value: "4.9★", label: "Guest Rating" },
   { value: "100%", label: "Privacy" },
   { value: "24/7", label: "Support" },
-  { value: "11+", label: "Add-on Services" },
+  { value: "10+", label: "Add-on Services" },
 ];
 
 const STEPS = [
@@ -506,6 +500,7 @@ export default function LandingPage() {
     el.textContent = CSS;
     document.head.appendChild(el);
     styleRef.current = el;
+    document.title = "Luxora — Premium Homestay in Noida, Sector 74 | Cozy Private Stay";
     return () => el.remove();
   }, []);
 
@@ -970,7 +965,7 @@ export default function LandingPage() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+                gridTemplateColumns: "repeat(5, 1fr)",
                 gap: "14px",
               }}
             >
@@ -1290,14 +1285,13 @@ export default function LandingPage() {
             </p>
             <div
               style={{
-                display: "flex",
-                flexWrap: "wrap",
+                display: "grid",
+                gridTemplateColumns: "repeat(5, 1fr)",
                 gap: "10px",
-                justifyContent: "center",
               }}
             >
               {ADDONS.map((a) => (
-                <div key={a.label} className="lp-addon-chip">
+                <div key={a.label} className="lp-addon-chip" style={{ justifyContent: "center" }}>
                   <span>{a.icon}</span>
                   <span>{a.label}</span>
                 </div>

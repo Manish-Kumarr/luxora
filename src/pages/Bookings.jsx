@@ -63,7 +63,7 @@ const ALL_ADDONS = [
   { id: "laundry", label: "Laundry Service", price: 100, icon: "👕" },
   {
     id: "bike_rental",
-    label: "Scooter / Bike / Car Rental",
+    label: "Scooter / Bike",
     price: 500,
     icon: "🛵",
   },
@@ -155,14 +155,13 @@ export default function Bookings({ isMobile }) {
       b.check_in && b.check_out
         ? Math.max(0, (new Date(b.check_out) - new Date(b.check_in)) / 86400000)
         : 0;
-    const roomRaw =
-      b.is_owner_stay
-        ? Number(b.owner_stay_value) || calcRoomCost(b.check_in, b.check_out)
-        : b.custom_room_price != null
-          ? b.custom_price_type === "full"
-            ? Number(b.custom_room_price)
-            : Number(b.custom_room_price) * nights
-          : calcRoomCost(b.check_in, b.check_out);
+    const roomRaw = b.is_owner_stay
+      ? Number(b.owner_stay_value) || calcRoomCost(b.check_in, b.check_out)
+      : b.custom_room_price != null
+      ? b.custom_price_type === "full"
+        ? Number(b.custom_room_price)
+        : Number(b.custom_room_price) * nights
+      : calcRoomCost(b.check_in, b.check_out);
     const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
     const totalDiscountPct = (b.discount || 0) + (b.promo_discount || 0);
     const discountAmt = Math.min(
@@ -285,8 +284,10 @@ export default function Bookings({ isMobile }) {
     if (createForm.is_owner_stay) {
       if (createForm.staying_owner_ids.length === 0)
         return setCreateError("Select at least one owner who stayed.");
-      if (!createForm.check_in) return setCreateError("Check-in date is required.");
-      if (!createForm.check_out) return setCreateError("Check-out date is required.");
+      if (!createForm.check_in)
+        return setCreateError("Check-in date is required.");
+      if (!createForm.check_out)
+        return setCreateError("Check-out date is required.");
       if (createForm.check_out <= createForm.check_in)
         return setCreateError("Check-out must be after check-in.");
       setCreateSaving(true);
@@ -322,7 +323,19 @@ export default function Bookings({ isMobile }) {
       setCreateSaving(false);
       if (error) return setCreateError(error.message);
       setShowCreate(false);
-      setCreateForm({ name: "", phone: "", email: "", check_in: "", check_out: "", guests_count: 1, notes: "", status: "confirmed", is_owner_stay: false, staying_owner_ids: [], owner_stay_value: "" });
+      setCreateForm({
+        name: "",
+        phone: "",
+        email: "",
+        check_in: "",
+        check_out: "",
+        guests_count: 1,
+        notes: "",
+        status: "confirmed",
+        is_owner_stay: false,
+        staying_owner_ids: [],
+        owner_stay_value: "",
+      });
       setCreateAddons([]);
       return;
     }
@@ -355,7 +368,9 @@ export default function Bookings({ isMobile }) {
         createForm.useCustomPrice && createForm.custom_room_price
           ? Number(createForm.custom_room_price)
           : null,
-      custom_price_type: createForm.useCustomPrice ? createForm.custom_price_type : null,
+      custom_price_type: createForm.useCustomPrice
+        ? createForm.custom_price_type
+        : null,
       broker_name: createForm.broker_name?.trim() || null,
       broker_phone: createForm.broker_phone?.trim() || null,
       broker_commission: (() => {
@@ -453,11 +468,19 @@ export default function Bookings({ isMobile }) {
   });
 
   const isFiltered =
-    search.trim() || statusFilter !== "all" || sourceFilter !== "all" || bookingTypeFilter !== "all" || dateFilter !== "all";
+    search.trim() ||
+    statusFilter !== "all" ||
+    sourceFilter !== "all" ||
+    bookingTypeFilter !== "all" ||
+    dateFilter !== "all";
 
   // ── Stats ──
   const todayStr = new Date().toISOString().split("T")[0];
-  const tomorrowStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })();
+  const tomorrowStr = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split("T")[0];
+  })();
   const totalRevenue = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const totalPendingBalance = bookings
     .filter((b) => b.status !== "cancelled" && b.status !== "checked-out")
@@ -465,11 +488,15 @@ export default function Bookings({ isMobile }) {
       const fin = getBookingFinancials(b);
       return s + Math.max(0, fin.balance);
     }, 0);
-  const checkedInCount = bookings.filter((b) => b.status === "checked-in").length;
+  const checkedInCount = bookings.filter(
+    (b) => b.status === "checked-in"
+  ).length;
 
   // ── Returning guests (same phone, 2+ bookings) ──
   const phoneCounts = {};
-  bookings.forEach((b) => { if (b.phone) phoneCounts[b.phone] = (phoneCounts[b.phone] || 0) + 1; });
+  bookings.forEach((b) => {
+    if (b.phone) phoneCounts[b.phone] = (phoneCounts[b.phone] || 0) + 1;
+  });
 
   const pad = isMobile ? "16px" : "32px";
   const gap = isMobile ? "14px" : "24px";
@@ -541,7 +568,9 @@ export default function Bookings({ isMobile }) {
       guests_count: Number(editForm.guests_count),
       notes: editForm.notes,
       custom_room_price: effectiveCustomPrice,
-      custom_price_type: editForm.useCustomPrice ? editForm.custom_price_type : null,
+      custom_price_type: editForm.useCustomPrice
+        ? editForm.custom_price_type
+        : null,
       broker_name: editForm.useCustomPrice
         ? editForm.broker_name.trim() || null
         : null,
@@ -833,7 +862,17 @@ export default function Bookings({ isMobile }) {
               <option value="direct">Direct</option>
               <option value="broker">Broker</option>
             </select>
-            <ChevronDown size={13} color="#555" style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <ChevronDown
+              size={13}
+              color="#555"
+              style={{
+                position: "absolute",
+                right: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+              }}
+            />
           </div>
 
           {/* Booking type filter */}
@@ -860,7 +899,17 @@ export default function Bookings({ isMobile }) {
               <option value="normal">Guest Only</option>
               <option value="owner">Owner Stay</option>
             </select>
-            <ChevronDown size={13} color="#555" style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <ChevronDown
+              size={13}
+              color="#555"
+              style={{
+                position: "absolute",
+                right: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+              }}
+            />
           </div>
 
           {/* Date filter dropdown */}
@@ -984,18 +1033,68 @@ export default function Bookings({ isMobile }) {
       </div>
 
       {/* ── QUICK STATS ── */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? "10px" : "14px" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)",
+          gap: isMobile ? "10px" : "14px",
+        }}
+      >
         {[
           { label: "Total Bookings", value: bookings.length, color: "#33b5b5" },
-          { label: "Upcoming", value: bookings.filter(b => b.status === "pending" || b.status === "confirmed").length, color: "#06b6d4" },
+          {
+            label: "Upcoming",
+            value: bookings.filter(
+              (b) => b.status === "pending" || b.status === "confirmed"
+            ).length,
+            color: "#06b6d4",
+          },
           { label: "Checked In", value: checkedInCount, color: "#10b981" },
-          { label: "Cancelled", value: bookings.filter(b => b.status === "cancelled").length, color: "#ef4444" },
-          { label: "Revenue Collected", value: "₹" + Number(totalRevenue).toLocaleString("en-IN"), color: "#008080" },
-          { label: "Pending Balance", value: "₹" + Number(totalPendingBalance).toLocaleString("en-IN"), color: "#f59e0b" },
+          {
+            label: "Cancelled",
+            value: bookings.filter((b) => b.status === "cancelled").length,
+            color: "#ef4444",
+          },
+          {
+            label: "Revenue Collected",
+            value: "₹" + Number(totalRevenue).toLocaleString("en-IN"),
+            color: "#008080",
+          },
+          {
+            label: "Pending Balance",
+            value: "₹" + Number(totalPendingBalance).toLocaleString("en-IN"),
+            color: "#f59e0b",
+          },
         ].map((s) => (
-          <div key={s.label} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: "10px", padding: isMobile ? "12px 14px" : "14px 18px" }}>
-            <p style={{ fontSize: "11px", color: "#555", fontWeight: "600", letterSpacing: "0.05em", marginBottom: "5px" }}>{s.label}</p>
-            <p style={{ fontSize: isMobile ? "17px" : "20px", fontWeight: "800", color: s.color }}>{s.value}</p>
+          <div
+            key={s.label}
+            style={{
+              background: "#111",
+              border: "1px solid #1e1e1e",
+              borderRadius: "10px",
+              padding: isMobile ? "12px 14px" : "14px 18px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#555",
+                fontWeight: "600",
+                letterSpacing: "0.05em",
+                marginBottom: "5px",
+              }}
+            >
+              {s.label}
+            </p>
+            <p
+              style={{
+                fontSize: isMobile ? "17px" : "20px",
+                fontWeight: "800",
+                color: s.color,
+              }}
+            >
+              {s.value}
+            </p>
           </div>
         ))}
       </div>
@@ -1294,7 +1393,13 @@ export default function Bookings({ isMobile }) {
                             {b.name?.[0]?.toUpperCase() || "?"}
                           </div>
                           <div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                              }}
+                            >
                               <p
                                 style={{
                                   fontWeight: "700",
@@ -1305,7 +1410,17 @@ export default function Bookings({ isMobile }) {
                                 {b.name}
                               </p>
                               {b.is_owner_stay && (
-                                <span style={{ fontSize: "10px", fontWeight: "700", color: "#c084fc", background: "rgba(168,85,247,0.12)", border: "1px solid rgba(168,85,247,0.3)", borderRadius: "4px", padding: "1px 6px" }}>
+                                <span
+                                  style={{
+                                    fontSize: "10px",
+                                    fontWeight: "700",
+                                    color: "#c084fc",
+                                    background: "rgba(168,85,247,0.12)",
+                                    border: "1px solid rgba(168,85,247,0.3)",
+                                    borderRadius: "4px",
+                                    padding: "1px 6px",
+                                  }}
+                                >
                                   OWNER
                                 </span>
                               )}
@@ -1362,8 +1477,10 @@ export default function Bookings({ isMobile }) {
         filteredBookings.map((b) => {
           const s = STATUS_COLORS[b.status] || STATUS_COLORS.pending;
           const isReturning = (phoneCounts[b.phone] || 0) > 1;
-          const checkoutToday = b.check_out === todayStr && b.status !== "checked-out";
-          const checkoutTomorrow = b.check_out === tomorrowStr && b.status !== "checked-out";
+          const checkoutToday =
+            b.check_out === todayStr && b.status !== "checked-out";
+          const checkoutTomorrow =
+            b.check_out === tomorrowStr && b.status !== "checked-out";
           const totalAddonCost = (b.addons || []).reduce(
             (sum, a) => sum + (a.price || 0),
             0
@@ -1388,16 +1505,24 @@ export default function Bookings({ isMobile }) {
             >
               {/* Checkout alert banner */}
               {(checkoutToday || checkoutTomorrow) && (
-                <div style={{
-                  background: checkoutToday ? "rgba(239,68,68,0.08)" : "rgba(245,158,11,0.06)",
-                  borderBottom: checkoutToday ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(245,158,11,0.2)",
-                  padding: "6px 16px",
-                  fontSize: "11px",
-                  fontWeight: "700",
-                  color: checkoutToday ? "#ef4444" : "#f59e0b",
-                  letterSpacing: "0.05em",
-                }}>
-                  {checkoutToday ? "⚠ CHECKING OUT TODAY" : "CHECK-OUT TOMORROW"}
+                <div
+                  style={{
+                    background: checkoutToday
+                      ? "rgba(239,68,68,0.08)"
+                      : "rgba(245,158,11,0.06)",
+                    borderBottom: checkoutToday
+                      ? "1px solid rgba(239,68,68,0.2)"
+                      : "1px solid rgba(245,158,11,0.2)",
+                    padding: "6px 16px",
+                    fontSize: "11px",
+                    fontWeight: "700",
+                    color: checkoutToday ? "#ef4444" : "#f59e0b",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  {checkoutToday
+                    ? "⚠ CHECKING OUT TODAY"
+                    : "CHECK-OUT TOMORROW"}
                 </div>
               )}
               {/* Card Header */}
@@ -1476,12 +1601,32 @@ export default function Bookings({ isMobile }) {
                         </span>
                       )}
                       {isReturning && (
-                        <span style={{ fontSize: "10px", fontWeight: "700", padding: "2px 8px", borderRadius: "20px", background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.3)", color: "#8b5cf6" }}>
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            fontWeight: "700",
+                            padding: "2px 8px",
+                            borderRadius: "20px",
+                            background: "rgba(139,92,246,0.12)",
+                            border: "1px solid rgba(139,92,246,0.3)",
+                            color: "#8b5cf6",
+                          }}
+                        >
                           Returning
                         </span>
                       )}
                       {b.broker_name && (
-                        <span style={{ fontSize: "10px", fontWeight: "600", padding: "2px 8px", borderRadius: "20px", background: "rgba(6,182,212,0.1)", border: "1px solid rgba(6,182,212,0.3)", color: "#06b6d4" }}>
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            fontWeight: "600",
+                            padding: "2px 8px",
+                            borderRadius: "20px",
+                            background: "rgba(6,182,212,0.1)",
+                            border: "1px solid rgba(6,182,212,0.3)",
+                            color: "#06b6d4",
+                          }}
+                        >
                           via {b.broker_name}
                         </span>
                       )}
@@ -1543,51 +1688,56 @@ export default function Bookings({ isMobile }) {
                       </option>
                     ))}
                   </select>
-                  {!b.is_owner_stay && (b.docs_status === "received" ? (
-                    <button
-                      onClick={() =>
-                        setDocsModal({ ...getDocUrls(b.id, b.guests_count || 1), bookingId: b.id, activeGuest: 0 })
-                      }
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "#10b981",
-                        display: "flex",
-                        padding: "4px",
-                      }}
-                      title="View Documents"
-                    >
-                      <FileText size={15} />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        const uploadLink = `${window.location.origin}/upload?id=${b.id}`;
-                        const clean = b.phone.replace(/\D/g, "");
-                        const waPhone =
-                          clean.length === 10 ? "91" + clean : clean;
-                        const waText = encodeURIComponent(
-                          `Hi ${b.name}! \n\nYour booking at Luxora is confirmed.\n\nTo complete your check-in, please upload your gov approved document here:\n ${uploadLink}\n\nThank you!`
-                        );
-                        window.open(
-                          `https://wa.me/${waPhone}?text=${waText}`,
-                          "_blank"
-                        );
-                      }}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "#25d366",
-                        display: "flex",
-                        padding: "4px",
-                      }}
-                      title="Send upload link on WhatsApp"
-                    >
-                      <MessageCircle size={15} />
-                    </button>
-                  ))}
+                  {!b.is_owner_stay &&
+                    (b.docs_status === "received" ? (
+                      <button
+                        onClick={() =>
+                          setDocsModal({
+                            ...getDocUrls(b.id, b.guests_count || 1),
+                            bookingId: b.id,
+                            activeGuest: 0,
+                          })
+                        }
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "#10b981",
+                          display: "flex",
+                          padding: "4px",
+                        }}
+                        title="View Documents"
+                      >
+                        <FileText size={15} />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          const uploadLink = `${window.location.origin}/upload?id=${b.id}`;
+                          const clean = b.phone.replace(/\D/g, "");
+                          const waPhone =
+                            clean.length === 10 ? "91" + clean : clean;
+                          const waText = encodeURIComponent(
+                            `Hi ${b.name}! \n\nYour booking at Luxora is confirmed.\n\nTo complete your check-in, please upload your gov approved document here:\n ${uploadLink}\n\nThank you!`
+                          );
+                          window.open(
+                            `https://wa.me/${waPhone}?text=${waText}`,
+                            "_blank"
+                          );
+                        }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "#25d366",
+                          display: "flex",
+                          padding: "4px",
+                        }}
+                        title="Send upload link on WhatsApp"
+                      >
+                        <MessageCircle size={15} />
+                      </button>
+                    ))}
                   {!b.is_owner_stay && b.docs_status !== "received" && (
                     <button
                       onClick={() =>
@@ -2033,14 +2183,14 @@ export default function Bookings({ isMobile }) {
                               fin.balance <= 0
                                 ? "rgba(16,185,129,0.08)"
                                 : b.is_owner_stay
-                                  ? "rgba(168,85,247,0.08)"
-                                  : "rgba(239,68,68,0.08)",
+                                ? "rgba(168,85,247,0.08)"
+                                : "rgba(239,68,68,0.08)",
                             border: `1px solid ${
                               fin.balance <= 0
                                 ? "rgba(16,185,129,0.25)"
                                 : b.is_owner_stay
-                                  ? "rgba(168,85,247,0.25)"
-                                  : "rgba(239,68,68,0.25)"
+                                ? "rgba(168,85,247,0.25)"
+                                : "rgba(239,68,68,0.25)"
                             }`,
                             borderRadius: "7px",
                             padding: "7px 10px",
@@ -2049,16 +2199,30 @@ export default function Bookings({ isMobile }) {
                         >
                           <span
                             style={{
-                              color: fin.balance <= 0 ? "#10b981" : b.is_owner_stay ? "#c084fc" : "#ef4444",
+                              color:
+                                fin.balance <= 0
+                                  ? "#10b981"
+                                  : b.is_owner_stay
+                                  ? "#c084fc"
+                                  : "#ef4444",
                               fontWeight: "700",
                               fontSize: "13px",
                             }}
                           >
-                            {fin.balance <= 0 ? "Cleared" : b.is_owner_stay ? "Adjusts in Settlement" : "Balance Due"}
+                            {fin.balance <= 0
+                              ? "Cleared"
+                              : b.is_owner_stay
+                              ? "Adjusts in Settlement"
+                              : "Balance Due"}
                           </span>
                           <span
                             style={{
-                              color: fin.balance <= 0 ? "#10b981" : b.is_owner_stay ? "#c084fc" : "#ef4444",
+                              color:
+                                fin.balance <= 0
+                                  ? "#10b981"
+                                  : b.is_owner_stay
+                                  ? "#c084fc"
+                                  : "#ef4444",
                               fontWeight: "800",
                               fontSize: "14px",
                             }}
@@ -2268,7 +2432,10 @@ export default function Bookings({ isMobile }) {
                                 <button
                                   onClick={async () => {
                                     setBrokerPayId(b.id);
-                                    await markBrokerCommissionPaid(b.id, !b.broker_commission_paid);
+                                    await markBrokerCommissionPaid(
+                                      b.id,
+                                      !b.broker_commission_paid
+                                    );
                                     setBrokerPayId(null);
                                   }}
                                   disabled={brokerPayId === b.id}
@@ -2918,32 +3085,78 @@ export default function Bookings({ isMobile }) {
               <div
                 style={{
                   padding: "12px 14px",
-                  background: createForm.is_owner_stay ? "rgba(168,85,247,0.08)" : "#1a1a1a",
-                  border: `1px solid ${createForm.is_owner_stay ? "rgba(168,85,247,0.4)" : "#2a2a2a"}`,
+                  background: createForm.is_owner_stay
+                    ? "rgba(168,85,247,0.08)"
+                    : "#1a1a1a",
+                  border: `1px solid ${
+                    createForm.is_owner_stay
+                      ? "rgba(168,85,247,0.4)"
+                      : "#2a2a2a"
+                  }`,
                   borderRadius: "8px",
                 }}
               >
-                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    cursor: "pointer",
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={!!createForm.is_owner_stay}
                     onChange={(e) =>
-                      setCreateForm({ ...createForm, is_owner_stay: e.target.checked, staying_owner_ids: [] })
+                      setCreateForm({
+                        ...createForm,
+                        is_owner_stay: e.target.checked,
+                        staying_owner_ids: [],
+                      })
                     }
-                    style={{ width: "15px", height: "15px", accentColor: "#a855f7", cursor: "pointer" }}
+                    style={{
+                      width: "15px",
+                      height: "15px",
+                      accentColor: "#a855f7",
+                      cursor: "pointer",
+                    }}
                   />
-                  <span style={{ fontSize: "13px", color: createForm.is_owner_stay ? "#c084fc" : "#ccc", fontWeight: "600" }}>
+                  <span
+                    style={{
+                      fontSize: "13px",
+                      color: createForm.is_owner_stay ? "#c084fc" : "#ccc",
+                      fontWeight: "600",
+                    }}
+                  >
                     Owner Stay (auto-adjusted in settlement)
                   </span>
                 </label>
                 {createForm.is_owner_stay && owners.length > 0 && (
-                  <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                    <p style={{ fontSize: "11px", color: "#888", fontWeight: "600", letterSpacing: "0.05em" }}>
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "11px",
+                        color: "#888",
+                        fontWeight: "600",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
                       WHO STAYED? (select owners)
                     </p>
-                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <div
+                      style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}
+                    >
                       {owners.map((o) => {
-                        const selected = createForm.staying_owner_ids.includes(o.id);
+                        const selected = createForm.staying_owner_ids.includes(
+                          o.id
+                        );
                         return (
                           <button
                             key={o.id}
@@ -2952,16 +3165,22 @@ export default function Bookings({ isMobile }) {
                               setCreateForm((f) => ({
                                 ...f,
                                 staying_owner_ids: selected
-                                  ? f.staying_owner_ids.filter((id) => id !== o.id)
+                                  ? f.staying_owner_ids.filter(
+                                      (id) => id !== o.id
+                                    )
                                   : [...f.staying_owner_ids, o.id],
                               }));
                             }}
                             style={{
                               padding: "6px 14px",
                               borderRadius: "20px",
-                              border: `1.5px solid ${selected ? (o.color || "#a855f7") : "#2a2a2a"}`,
-                              background: selected ? (o.color || "#a855f7") + "22" : "#141414",
-                              color: selected ? (o.color || "#c084fc") : "#666",
+                              border: `1.5px solid ${
+                                selected ? o.color || "#a855f7" : "#2a2a2a"
+                              }`,
+                              background: selected
+                                ? (o.color || "#a855f7") + "22"
+                                : "#141414",
+                              color: selected ? o.color || "#c084fc" : "#666",
                               fontSize: "13px",
                               fontWeight: "600",
                               cursor: "pointer",
@@ -2973,29 +3192,71 @@ export default function Bookings({ isMobile }) {
                       })}
                     </div>
                     <div style={{ marginTop: "4px" }}>
-                      <p style={{ fontSize: "11px", color: "#888", fontWeight: "600", marginBottom: "5px" }}>
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#888",
+                          fontWeight: "600",
+                          marginBottom: "5px",
+                        }}
+                      >
                         Room Value (₹)
                       </p>
                       <div style={{ position: "relative" }}>
                         <input
                           type="number"
                           value={createForm.owner_stay_value}
-                          onChange={(e) => setCreateForm((f) => ({ ...f, owner_stay_value: e.target.value }))}
+                          onChange={(e) =>
+                            setCreateForm((f) => ({
+                              ...f,
+                              owner_stay_value: e.target.value,
+                            }))
+                          }
                           placeholder={
-                            createForm.check_in && createForm.check_out && createForm.check_out > createForm.check_in
-                              ? `Auto: ₹${calcRoomCost(createForm.check_in, createForm.check_out).toLocaleString("en-IN")}`
+                            createForm.check_in &&
+                            createForm.check_out &&
+                            createForm.check_out > createForm.check_in
+                              ? `Auto: ₹${calcRoomCost(
+                                  createForm.check_in,
+                                  createForm.check_out
+                                ).toLocaleString("en-IN")}`
                               : "Enter room value"
                           }
-                          style={{ ...inputStyle, borderColor: "#3a2a5a", background: "#1a1228" }}
+                          style={{
+                            ...inputStyle,
+                            borderColor: "#3a2a5a",
+                            background: "#1a1228",
+                          }}
                         />
-                        {createForm.check_in && createForm.check_out && createForm.check_out > createForm.check_in && !createForm.owner_stay_value && (
-                          <span style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", fontSize: "11px", color: "#7c3aed", fontWeight: "600", pointerEvents: "none" }}>
-                            auto
-                          </span>
-                        )}
+                        {createForm.check_in &&
+                          createForm.check_out &&
+                          createForm.check_out > createForm.check_in &&
+                          !createForm.owner_stay_value && (
+                            <span
+                              style={{
+                                position: "absolute",
+                                right: "10px",
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                fontSize: "11px",
+                                color: "#7c3aed",
+                                fontWeight: "600",
+                                pointerEvents: "none",
+                              }}
+                            >
+                              auto
+                            </span>
+                          )}
                       </div>
-                      <p style={{ fontSize: "11px", color: "#555", marginTop: "4px" }}>
-                        Leave blank to use calculated rate · will be adjusted in settlement
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          marginTop: "4px",
+                        }}
+                      >
+                        Leave blank to use calculated rate · will be adjusted in
+                        settlement
                       </p>
                     </div>
                   </div>
@@ -3013,37 +3274,78 @@ export default function Bookings({ isMobile }) {
                     }}
                   >
                     <div>
-                      <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          marginBottom: "5px",
+                          fontWeight: "500",
+                        }}
+                      >
                         Guest Name *
                       </p>
                       <input
                         value={createForm.name}
-                        onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                        onChange={(e) =>
+                          setCreateForm({ ...createForm, name: e.target.value })
+                        }
                         placeholder="Full name"
                         style={inputStyle}
                       />
                     </div>
                     <div>
-                      <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>
+                      <p
+                        style={{
+                          fontSize: "11px",
+                          color: "#555",
+                          marginBottom: "5px",
+                          fontWeight: "500",
+                        }}
+                      >
                         Phone *
                       </p>
                       <input
                         value={createForm.phone}
-                        onChange={(e) => { setCreateForm({ ...createForm, phone: e.target.value }); setCreateError(""); }}
+                        onChange={(e) => {
+                          setCreateForm({
+                            ...createForm,
+                            phone: e.target.value,
+                          });
+                          setCreateError("");
+                        }}
                         placeholder="+91 00000 00000"
                         style={inputStyle}
                       />
                       {createError === "Phone must be 10 digits." && (
-                        <p style={{ fontSize: "11px", color: "#ef4444", marginTop: "4px" }}>Phone must be 10 digits.</p>
+                        <p
+                          style={{
+                            fontSize: "11px",
+                            color: "#ef4444",
+                            marginTop: "4px",
+                          }}
+                        >
+                          Phone must be 10 digits.
+                        </p>
                       )}
                     </div>
                   </div>
                   <div>
-                    <p style={{ fontSize: "11px", color: "#555", marginBottom: "5px", fontWeight: "500" }}>Email</p>
+                    <p
+                      style={{
+                        fontSize: "11px",
+                        color: "#555",
+                        marginBottom: "5px",
+                        fontWeight: "500",
+                      }}
+                    >
+                      Email
+                    </p>
                     <input
                       type="email"
                       value={createForm.email}
-                      onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+                      onChange={(e) =>
+                        setCreateForm({ ...createForm, email: e.target.value })
+                      }
                       placeholder="guest@email.com"
                       style={inputStyle}
                     />
@@ -3290,9 +3592,19 @@ export default function Bookings({ isMobile }) {
                               flex: 1,
                               padding: "7px 0",
                               borderRadius: "7px",
-                              border: `1px solid ${createForm.custom_price_type === type ? "#a855f7" : "#2a2a2a"}`,
-                              background: createForm.custom_price_type === type ? "rgba(168,85,247,0.15)" : "#141414",
-                              color: createForm.custom_price_type === type ? "#c084fc" : "#666",
+                              border: `1px solid ${
+                                createForm.custom_price_type === type
+                                  ? "#a855f7"
+                                  : "#2a2a2a"
+                              }`,
+                              background:
+                                createForm.custom_price_type === type
+                                  ? "rgba(168,85,247,0.15)"
+                                  : "#141414",
+                              color:
+                                createForm.custom_price_type === type
+                                  ? "#c084fc"
+                                  : "#666",
                               fontSize: "12px",
                               fontWeight: "600",
                               cursor: "pointer",
@@ -3324,7 +3636,11 @@ export default function Bookings({ isMobile }) {
                             custom_room_price: e.target.value,
                           })
                         }
-                        placeholder={createForm.custom_price_type === "full" ? "e.g. 10000" : "e.g. 2000"}
+                        placeholder={
+                          createForm.custom_price_type === "full"
+                            ? "e.g. 10000"
+                            : "e.g. 2000"
+                        }
                         style={inputStyle}
                       />
                     </div>
@@ -3946,9 +4262,19 @@ export default function Bookings({ isMobile }) {
                                 flex: 1,
                                 padding: "7px 0",
                                 borderRadius: "7px",
-                                border: `1px solid ${editForm.custom_price_type === type ? "#a855f7" : "#2a2a2a"}`,
-                                background: editForm.custom_price_type === type ? "rgba(168,85,247,0.15)" : "#141414",
-                                color: editForm.custom_price_type === type ? "#c084fc" : "#666",
+                                border: `1px solid ${
+                                  editForm.custom_price_type === type
+                                    ? "#a855f7"
+                                    : "#2a2a2a"
+                                }`,
+                                background:
+                                  editForm.custom_price_type === type
+                                    ? "rgba(168,85,247,0.15)"
+                                    : "#141414",
+                                color:
+                                  editForm.custom_price_type === type
+                                    ? "#c084fc"
+                                    : "#666",
                                 fontSize: "12px",
                                 fontWeight: "600",
                                 cursor: "pointer",
@@ -3980,7 +4306,11 @@ export default function Bookings({ isMobile }) {
                               custom_room_price: e.target.value,
                             })
                           }
-                          placeholder={editForm.custom_price_type === "full" ? "e.g. 10000" : "e.g. 2000"}
+                          placeholder={
+                            editForm.custom_price_type === "full"
+                              ? "e.g. 10000"
+                              : "e.g. 2000"
+                          }
                           style={{
                             width: "100%",
                             background: "#141414",
@@ -4312,17 +4642,34 @@ export default function Bookings({ isMobile }) {
             >
               {/* Amount */}
               <div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "5px" }}>
-                  <p style={{ fontSize: "11px", color: "#555", fontWeight: "500" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: "5px",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#555",
+                      fontWeight: "500",
+                    }}
+                  >
                     Amount (₹) *
                   </p>
                   {(() => {
                     const booking = bookings.find((b) => b.id === payModalId);
-                    const remaining = booking ? Math.max(0, getBookingFinancials(booking).balance) : 0;
+                    const remaining = booking
+                      ? Math.max(0, getBookingFinancials(booking).balance)
+                      : 0;
                     return remaining > 0 ? (
                       <button
                         type="button"
-                        onClick={() => setPayForm({ ...payForm, amount: String(remaining) })}
+                        onClick={() =>
+                          setPayForm({ ...payForm, amount: String(remaining) })
+                        }
                         style={{
                           background: "rgba(168,85,247,0.12)",
                           border: "1px solid rgba(168,85,247,0.35)",
@@ -5232,38 +5579,68 @@ export default function Bookings({ isMobile }) {
                 : "Check-out Confirm?"}
             </p>
             <p
-              style={{ color: "#555", fontSize: "13px", marginBottom: statusConfirm.status === "checked-out" ? "12px" : "24px" }}
+              style={{
+                color: "#555",
+                fontSize: "13px",
+                marginBottom:
+                  statusConfirm.status === "checked-out" ? "12px" : "24px",
+              }}
             >
               Are you sure you want to{" "}
               {statusConfirm.status === "checked-in" ? "check-in" : "check-out"}{" "}
               <strong style={{ color: "#e0e0e0" }}>{statusConfirm.name}</strong>
               ? The exact time will be saved.
             </p>
-            {statusConfirm.status === "checked-out" && (() => {
-              const booking = bookings.find((b) => b.id === statusConfirm.bookingId);
-              const fin = booking ? getBookingFinancials(booking) : null;
-              if (!fin || fin.balance <= 0) return null;
-              return (
-                <div style={{
-                  background: "rgba(239,68,68,0.08)",
-                  border: "1px solid rgba(239,68,68,0.3)",
-                  borderRadius: "10px",
-                  padding: "12px 16px",
-                  marginBottom: "20px",
-                  textAlign: "left",
-                }}>
-                  <p style={{ fontSize: "12px", color: "#ef4444", fontWeight: "700", marginBottom: "4px" }}>
-                    Pending Balance Due
-                  </p>
-                  <p style={{ fontSize: "20px", fontWeight: "800", color: "#ef4444" }}>
-                    ₹{fin.balance.toLocaleString("en-IN")}
-                  </p>
-                  <p style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
-                    Total Due: ₹{fin.totalDue.toLocaleString("en-IN")} · Paid: ₹{fin.totalPaid.toLocaleString("en-IN")}
-                  </p>
-                </div>
-              );
-            })()}
+            {statusConfirm.status === "checked-out" &&
+              (() => {
+                const booking = bookings.find(
+                  (b) => b.id === statusConfirm.bookingId
+                );
+                const fin = booking ? getBookingFinancials(booking) : null;
+                if (!fin || fin.balance <= 0) return null;
+                return (
+                  <div
+                    style={{
+                      background: "rgba(239,68,68,0.08)",
+                      border: "1px solid rgba(239,68,68,0.3)",
+                      borderRadius: "10px",
+                      padding: "12px 16px",
+                      marginBottom: "20px",
+                      textAlign: "left",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "12px",
+                        color: "#ef4444",
+                        fontWeight: "700",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      Pending Balance Due
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "20px",
+                        fontWeight: "800",
+                        color: "#ef4444",
+                      }}
+                    >
+                      ₹{fin.balance.toLocaleString("en-IN")}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "11px",
+                        color: "#888",
+                        marginTop: "4px",
+                      }}
+                    >
+                      Total Due: ₹{fin.totalDue.toLocaleString("en-IN")} · Paid:
+                      ₹{fin.totalPaid.toLocaleString("en-IN")}
+                    </p>
+                  </div>
+                );
+              })()}
             <div style={{ display: "flex", gap: "10px" }}>
               <button
                 onClick={() => setStatusConfirm(null)}

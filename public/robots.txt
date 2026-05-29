@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /
+Allow: /guest
+Disallow: /login
+Disallow: /dashboard
+Disallow: /bookings
+Disallow: /expenses
+Disallow: /analytics
+Disallow: /settlement
+Disallow: /owners
+Disallow: /payouts
+Disallow: /maintenance
+
+Sitemap: https://luxora-ncr.online/sitemap.xml
