@@ -32,7 +32,10 @@ const PAGE_TITLES = {
 
 function AppInner() {
   const { isLoggedIn, authLoading } = useApp();
-  const [activePage, setActivePage] = useState("dashboard");
+  const [activePage, setActivePage] = useState(() => {
+    const path = window.location.pathname.replace("/", "");
+    return PAGE_TITLES[path] ? path : "dashboard";
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const width = useWindowWidth();
   const isMobile = width < 768;
@@ -63,6 +66,9 @@ function AppInner() {
     window.location.replace("/dashboard");
     return null;
   }
+  if (!PAGE_TITLES[window.location.pathname.replace("/", "")]) {
+    window.history.replaceState(null, "", `/${activePage}`);
+  }
 
   const pages = {
     dashboard: <Dashboard isMobile={isMobile} />,
@@ -78,6 +84,7 @@ function AppInner() {
 
   const handleNavChange = (page) => {
     setActivePage(page);
+    window.history.pushState(null, "", `/${page}`);
     setSidebarOpen(false);
   };
 
