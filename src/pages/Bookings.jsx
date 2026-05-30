@@ -1711,56 +1711,86 @@ export default function Bookings({ isMobile }) {
                       </option>
                     ))}
                   </select>
-                  {!b.is_owner_stay &&
-                    (b.docs_status === "received" ? (
-                      <button
-                        onClick={() =>
-                          setDocsModal({
-                            ...getDocUrls(b.id, b.guests_count || 1),
-                            bookingId: b.id,
-                            activeGuest: 0,
-                          })
-                        }
-                        style={{
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          color: "#10b981",
-                          display: "flex",
-                          padding: "4px",
-                        }}
-                        title="View Documents"
-                      >
-                        <FileText size={15} />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          const uploadLink = `${window.location.origin}/upload?id=${b.id}`;
-                          const clean = b.phone.replace(/\D/g, "");
-                          const waPhone =
-                            clean.length === 10 ? "91" + clean : clean;
-                          const waText = encodeURIComponent(
-                            `Hi ${b.name}! \n\nYour booking at Luxora is confirmed.\n\nTo complete your check-in, please upload your gov approved document here:\n ${uploadLink}\n\nThank you!`
-                          );
-                          window.open(
-                            `https://wa.me/${waPhone}?text=${waText}`,
-                            "_blank"
-                          );
-                        }}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          color: "#25d366",
-                          display: "flex",
-                          padding: "4px",
-                        }}
-                        title="Send upload link on WhatsApp"
-                      >
-                        <MessageCircle size={15} />
-                      </button>
-                    ))}
+                  {!b.is_owner_stay && (
+                    <>
+                      {b.docs_status === "received" ? (
+                        <button
+                          onClick={() =>
+                            setDocsModal({
+                              ...getDocUrls(b.id, b.guests_count || 1),
+                              bookingId: b.id,
+                              activeGuest: 0,
+                            })
+                          }
+                          style={{
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            color: "#10b981",
+                            display: "flex",
+                            padding: "4px",
+                          }}
+                          title="View Documents"
+                        >
+                          <FileText size={15} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            const uploadLink = `${window.location.origin}/upload?id=${b.id}`;
+                            const clean = b.phone.replace(/\D/g, "");
+                            const waPhone =
+                              clean.length === 10 ? "91" + clean : clean;
+                            const waText = encodeURIComponent(
+                              `Hi ${b.name}! \n\nYour booking at Luxora is confirmed.\n\nTo complete your check-in, please upload your gov approved document here:\n ${uploadLink}\n\nThank you!`
+                            );
+                            window.open(
+                              `https://wa.me/${waPhone}?text=${waText}`,
+                              "_blank"
+                            );
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            color: "#25d366",
+                            display: "flex",
+                            padding: "4px",
+                          }}
+                          title="Send upload link on WhatsApp"
+                        >
+                          <MessageCircle size={15} />
+                        </button>
+                      )}
+                      {b.docs_status === "received" && (
+                        <button
+                          onClick={() => {
+                            const clean = (b.phone || "").replace(/\D/g, "");
+                            const waPhone = "91" + clean.slice(-10);
+                            const fin = getBookingFinancials(b);
+                            const waText = encodeURIComponent(
+                              `Hi ${b.name}!\n\nYour booking at *Luxora* is confirmed.\n\nCheck-in: ${fmt(b.check_in)}\nCheck-out: ${fmt(b.check_out)}\nGuests: ${b.guests_count}${fin.balance > 0 ? `\nBalance due at check-in: Rs.${fin.balance.toLocaleString("en-IN")}` : ""}\n\nWe look forward to hosting you!`
+                            );
+                            window.open(
+                              `https://wa.me/${waPhone}?text=${waText}`,
+                              "_blank"
+                            );
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            color: "#25d366",
+                            display: "flex",
+                            padding: "4px",
+                          }}
+                          title="Send confirmation on WhatsApp"
+                        >
+                          <MessageCircle size={15} />
+                        </button>
+                      )}
+                    </>
+                  )}
                   {!b.is_owner_stay && b.docs_status !== "received" && (
                     <button
                       onClick={() =>
