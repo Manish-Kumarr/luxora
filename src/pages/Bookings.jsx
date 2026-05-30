@@ -96,6 +96,8 @@ const BLANK_EDIT = {
   custom_room_price: "",
   useCustomPrice: false,
   custom_price_type: "per_day",
+  is_owner_stay: false,
+  owner_stay_value: "",
 };
 const BLANK_PAY = { amount: "", method: "Cash", type: "Advance", note: "" };
 
@@ -188,6 +190,7 @@ export default function Bookings({ isMobile }) {
 
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState(BLANK_EDIT);
+  const [editError, setEditError] = useState("");
   const [deleteId, setDeleteId] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -532,6 +535,7 @@ export default function Bookings({ isMobile }) {
     bookingPayments(bookingId).reduce((s, p) => s + Number(p.amount), 0);
 
   const openEdit = (b) => {
+    setEditError("");
     setEditId(b.id);
     setEditForm({
       name: b.name || "",
@@ -550,16 +554,28 @@ export default function Bookings({ isMobile }) {
         b.custom_room_price != null ? String(b.custom_room_price) : "",
       useCustomPrice: b.custom_room_price != null,
       custom_price_type: b.custom_price_type || "per_day",
+      is_owner_stay: !!b.is_owner_stay,
+      owner_stay_value:
+        b.owner_stay_value != null ? String(b.owner_stay_value) : "",
     });
   };
 
   const saveEdit = async () => {
+    setEditError("");
+    if (!editForm.check_in || !editForm.check_out) {
+      setEditError("Check-in aur check-out date required hai.");
+      return;
+    }
+    if (!editForm.name.trim()) {
+      setEditError("Guest ka naam required hai.");
+      return;
+    }
     setSaving(true);
     const effectiveCustomPrice =
       editForm.useCustomPrice && editForm.custom_room_price
         ? Number(editForm.custom_room_price)
         : null;
-    await updateBooking(editId, {
+    const { error } = await updateBooking(editId, {
       name: editForm.name,
       phone: editForm.phone,
       email: editForm.email,
@@ -567,6 +583,9 @@ export default function Bookings({ isMobile }) {
       check_out: editForm.check_out,
       guests_count: Number(editForm.guests_count),
       notes: editForm.notes,
+      owner_stay_value: editForm.is_owner_stay && editForm.owner_stay_value
+        ? Number(editForm.owner_stay_value)
+        : null,
       custom_room_price: effectiveCustomPrice,
       custom_price_type: editForm.useCustomPrice
         ? editForm.custom_price_type
@@ -591,6 +610,10 @@ export default function Bookings({ isMobile }) {
         : null,
     });
     setSaving(false);
+    if (error) {
+      setEditError("Save nahi hua. Please dobara try karo.");
+      return;
+    }
     setEditId(null);
   };
 
@@ -4179,7 +4202,64 @@ export default function Bookings({ isMobile }) {
                   }}
                 />
               </div>
+              {/* Owner Stay Value */}
+              {editForm.is_owner_stay && (
+                <div
+                  style={{ borderTop: "1px solid #1e1e1e", paddingTop: "14px" }}
+                >
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      background: "rgba(168,85,247,0.06)",
+                      border: "1px solid rgba(168,85,247,0.25)",
+                      borderRadius: "8px",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: "700",
+                        color: "#c084fc",
+                        letterSpacing: "0.06em",
+                        marginBottom: "10px",
+                      }}
+                    >
+                      OWNER STAY
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "11px",
+                        color: "#555",
+                        marginBottom: "5px",
+                        fontWeight: "500",
+                      }}
+                    >
+                      Stay Value (₹) — blank = room rate se calculate
+                    </p>
+                    <input
+                      type="number"
+                      value={editForm.owner_stay_value}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, owner_stay_value: e.target.value })
+                      }
+                      placeholder="e.g. 5000"
+                      style={{
+                        width: "100%",
+                        background: "#1a1a1a",
+                        border: "1px solid #2a2a2a",
+                        borderRadius: "8px",
+                        padding: "9px 12px",
+                        color: "#e0e0e0",
+                        fontSize: "14px",
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               {/* Custom Room Price + Broker */}
+              {!editForm.is_owner_stay && (
               <div
                 style={{ borderTop: "1px solid #1e1e1e", paddingTop: "14px" }}
               >
@@ -4536,7 +4616,20 @@ export default function Bookings({ isMobile }) {
                   )}
                 </div>
               </div>
+              )}
             </div>
+            {editError && (
+              <p
+                style={{
+                  color: "#ef4444",
+                  fontSize: "12px",
+                  padding: "0 20px 10px",
+                  margin: 0,
+                }}
+              >
+                {editError}
+              </p>
+            )}
             <div
               style={{ display: "flex", gap: "10px", padding: "0 20px 20px" }}
             >
