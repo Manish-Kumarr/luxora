@@ -183,7 +183,7 @@ export default function Analytics({ isMobile }) {
 
   // Outstanding balance — total due minus total paid across all filtered bookings
   const outstanding = filteredBookings.reduce((s, b) => {
-    if (b.status === "cancelled") return s;
+    if (b.status === "cancelled" || b.status === "checked-out" || b.is_owner_stay) return s;
     const bPayments = payments.filter((p) => p.booking_id === b.id);
     const paid = bPayments.reduce((ps, p) => ps + (p.amount || 0), 0);
     // totalDue: custom price or calculated
