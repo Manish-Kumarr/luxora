@@ -555,6 +555,7 @@ export default function Bookings({ isMobile }) {
       useCustomPrice: b.custom_room_price != null,
       custom_price_type: b.custom_price_type || "per_day",
       is_owner_stay: !!b.is_owner_stay,
+      staying_owner_ids: b.staying_owner_ids || [],
       owner_stay_value:
         b.owner_stay_value != null ? String(b.owner_stay_value) : "",
     });
@@ -583,6 +584,7 @@ export default function Bookings({ isMobile }) {
       check_out: editForm.check_out,
       guests_count: Number(editForm.guests_count),
       notes: editForm.notes,
+      staying_owner_ids: editForm.is_owner_stay ? (editForm.staying_owner_ids || []) : [],
       owner_stay_value: editForm.is_owner_stay && editForm.owner_stay_value
         ? Number(editForm.owner_stay_value)
         : null,
@@ -4256,6 +4258,44 @@ export default function Bookings({ isMobile }) {
                     >
                       OWNER STAY
                     </p>
+                    {owners.length > 0 && (
+                      <div style={{ marginBottom: "12px" }}>
+                        <p style={{ fontSize: "11px", color: "#888", fontWeight: "600", letterSpacing: "0.05em", marginBottom: "8px" }}>
+                          WHO STAYED? (select owners)
+                        </p>
+                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                          {owners.map((o) => {
+                            const selected = (editForm.staying_owner_ids || []).includes(o.id);
+                            return (
+                              <button
+                                key={o.id}
+                                type="button"
+                                onClick={() =>
+                                  setEditForm((f) => ({
+                                    ...f,
+                                    staying_owner_ids: selected
+                                      ? (f.staying_owner_ids || []).filter((id) => id !== o.id)
+                                      : [...(f.staying_owner_ids || []), o.id],
+                                  }))
+                                }
+                                style={{
+                                  padding: "6px 14px",
+                                  borderRadius: "20px",
+                                  border: `1.5px solid ${selected ? o.color || "#a855f7" : "#2a2a2a"}`,
+                                  background: selected ? (o.color || "#a855f7") + "22" : "#141414",
+                                  color: selected ? o.color || "#c084fc" : "#666",
+                                  fontSize: "13px",
+                                  fontWeight: "600",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {o.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                     <p
                       style={{
                         fontSize: "11px",
