@@ -831,7 +831,20 @@ export default function LandingPage() {
               {
                 icon: "💳",
                 label: "Starting From",
-                val: `${fmtRate(rates.weekday_rate)} / night`,
+                val: null,
+                rateNode: rates.weekday_rate != null ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: "12px", color: "#555", textDecoration: "line-through", fontWeight: "500" }}>
+                      {fmtRate(rates.weekday_rate)}
+                    </span>
+                    <span style={{ fontSize: "14px", color: "#33b5b5", fontWeight: "700" }}>
+                      {"₹" + Math.round(Number(rates.weekday_rate) * 0.9).toLocaleString("en-IN")} / night
+                    </span>
+                    <span style={{ fontSize: "10px", color: "#10b981", fontWeight: "700", background: "rgba(16,185,129,0.1)", padding: "1px 5px", borderRadius: "4px" }}>
+                      10% off
+                    </span>
+                  </span>
+                ) : <span>... / night</span>,
               },
             ].map((item, i) => (
               <div key={item.label}>
@@ -883,7 +896,7 @@ export default function LandingPage() {
                         marginTop: "3px",
                       }}
                     >
-                      {item.val}
+                      {item.rateNode || item.val}
                     </p>
                   </div>
                 </div>
@@ -1160,6 +1173,19 @@ export default function LandingPage() {
                 </p>
                 <p
                   style={{
+                    fontSize: "18px",
+                    fontWeight: "600",
+                    color: "#555",
+                    textDecoration: "line-through",
+                    letterSpacing: "-0.01em",
+                    lineHeight: 1,
+                    marginBottom: "4px",
+                  }}
+                >
+                  {fmtRate(rates.weekday_rate)}
+                </p>
+                <p
+                  style={{
                     fontSize: "42px",
                     fontWeight: "800",
                     color: "#33b5b5",
@@ -1167,10 +1193,13 @@ export default function LandingPage() {
                     lineHeight: 1,
                   }}
                 >
-                  {fmtRate(rates.weekday_rate)}
+                  {rates.weekday_rate != null ? "₹" + Math.round(Number(rates.weekday_rate) * 0.9).toLocaleString("en-IN") : "..."}
+                </p>
+                <p style={{ fontSize: "12px", color: "#10b981", fontWeight: "600", marginTop: "5px" }}>
+                  10% off
                 </p>
                 <p
-                  style={{ fontSize: "13px", color: "#555", marginTop: "6px" }}
+                  style={{ fontSize: "13px", color: "#555", marginTop: "4px" }}
                 >
                   per night
                 </p>
@@ -1198,6 +1227,19 @@ export default function LandingPage() {
                 </p>
                 <p
                   style={{
+                    fontSize: "18px",
+                    fontWeight: "600",
+                    color: "#555",
+                    textDecoration: "line-through",
+                    letterSpacing: "-0.01em",
+                    lineHeight: 1,
+                    marginBottom: "4px",
+                  }}
+                >
+                  {fmtRate(rates.weekend_rate)}
+                </p>
+                <p
+                  style={{
                     fontSize: "42px",
                     fontWeight: "800",
                     color: "#33b5b5",
@@ -1205,10 +1247,13 @@ export default function LandingPage() {
                     lineHeight: 1,
                   }}
                 >
-                  {fmtRate(rates.weekend_rate)}
+                  {rates.weekend_rate != null ? "₹" + Math.round(Number(rates.weekend_rate) * 0.9).toLocaleString("en-IN") : "..."}
+                </p>
+                <p style={{ fontSize: "12px", color: "#10b981", fontWeight: "600", marginTop: "5px" }}>
+                  10% off
                 </p>
                 <p
-                  style={{ fontSize: "13px", color: "#555", marginTop: "6px" }}
+                  style={{ fontSize: "13px", color: "#555", marginTop: "4px" }}
                 >
                   per night
                 </p>
