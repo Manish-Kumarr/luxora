@@ -355,6 +355,14 @@ export default function Bookings({ isMobile }) {
     setCreateSaving(true);
 
     const phone = createForm.phone.trim();
+
+    // Lock the room price at booking time so future rate changes don't affect it
+    const lockedRoomPrice = createForm.useCustomPrice && createForm.custom_room_price
+      ? (createForm.custom_price_type === "full"
+          ? Number(createForm.custom_room_price)
+          : Number(createForm.custom_room_price) * Math.max(0, (new Date(createForm.check_out) - new Date(createForm.check_in)) / 86400000))
+      : calcRoomCost(createForm.check_in, createForm.check_out);
+
     const { error } = await addBooking({
       name: createForm.name.trim(),
       phone,
@@ -367,25 +375,17 @@ export default function Bookings({ isMobile }) {
       addons: createAddons,
       docs_status: "pending",
       discount: 0,
-      custom_room_price:
-        createForm.useCustomPrice && createForm.custom_room_price
-          ? Number(createForm.custom_room_price)
-          : null,
-      custom_price_type: createForm.useCustomPrice
-        ? createForm.custom_price_type
-        : null,
+      custom_room_price: lockedRoomPrice,
+      custom_price_type: "full",
       broker_name: createForm.broker_name?.trim() || null,
       broker_phone: createForm.broker_phone?.trim() || null,
       broker_commission: (() => {
         if (!createForm.broker_commission) return null;
         if (
-          createForm.commissionType === "percent" &&
-          createForm.custom_room_price
+          createForm.commissionType === "percent"
         ) {
           return Math.round(
-            (Number(createForm.custom_room_price) *
-              Number(createForm.broker_commission)) /
-              100
+            (lockedRoomPrice * Number(createForm.broker_commission)) / 100
           );
         }
         return Number(createForm.broker_commission);
