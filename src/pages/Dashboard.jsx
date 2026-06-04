@@ -213,19 +213,21 @@ export default function Dashboard({ isMobile }) {
       const bPayments = payments.filter((p) => p.booking_id === b.id);
       const paid = bPayments.reduce((s, p) => s + (p.amount || 0), 0);
       const nights = (b.check_in && b.check_out) ? Math.max(0, (new Date(b.check_out) - new Date(b.check_in)) / 86400000) : 0;
-      const roomRaw = b.custom_room_price != null ? Number(b.custom_room_price) * nights : (() => {
-        if (!b.check_in || !b.check_out) return 0;
-        const start = new Date(b.check_in);
-        const end = new Date(b.check_out);
-        let total = 0;
-        const cur = new Date(start);
-        while (cur < end) {
-          const day = cur.getDay();
-          total += (day === 0 || day === 5 || day === 6) ? roomRates.weekend_rate : roomRates.weekday_rate;
-          cur.setDate(cur.getDate() + 1);
-        }
-        return total;
-      })();
+      const roomRaw = b.custom_room_price != null
+        ? (b.custom_price_type === "full" ? Number(b.custom_room_price) : Number(b.custom_room_price) * nights)
+        : (() => {
+          if (!b.check_in || !b.check_out) return 0;
+          const start = new Date(b.check_in);
+          const end = new Date(b.check_out);
+          let total = 0;
+          const cur = new Date(start);
+          while (cur < end) {
+            const day = cur.getDay();
+            total += (day === 0 || day === 5 || day === 6) ? roomRates.weekend_rate : roomRates.weekday_rate;
+            cur.setDate(cur.getDate() + 1);
+          }
+          return total;
+        })();
       const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
       const disc = Math.min(Math.round((roomRaw + addonRaw) * ((b.discount || 0) + (b.promo_discount || 0)) / 100), 200);
       const due = roomRaw + addonRaw - disc;
@@ -271,19 +273,21 @@ export default function Dashboard({ isMobile }) {
       const bPayments = payments.filter((p) => p.booking_id === b.id);
       const totalPaid = bPayments.reduce((s, p) => s + (p.amount || 0), 0);
       const nights = (b.check_in && b.check_out) ? Math.max(0, (new Date(b.check_out) - new Date(b.check_in)) / 86400000) : 0;
-      const roomRaw = b.custom_room_price != null ? Number(b.custom_room_price) * nights : (() => {
-        if (!b.check_in || !b.check_out) return 0;
-        const start = new Date(b.check_in);
-        const end = new Date(b.check_out);
-        let total = 0;
-        const cur = new Date(start);
-        while (cur < end) {
-          const day = cur.getDay();
-          total += (day === 0 || day === 5 || day === 6) ? roomRates.weekend_rate : roomRates.weekday_rate;
-          cur.setDate(cur.getDate() + 1);
-        }
-        return total;
-      })();
+      const roomRaw = b.custom_room_price != null
+        ? (b.custom_price_type === "full" ? Number(b.custom_room_price) : Number(b.custom_room_price) * nights)
+        : (() => {
+          if (!b.check_in || !b.check_out) return 0;
+          const start = new Date(b.check_in);
+          const end = new Date(b.check_out);
+          let total = 0;
+          const cur = new Date(start);
+          while (cur < end) {
+            const day = cur.getDay();
+            total += (day === 0 || day === 5 || day === 6) ? roomRates.weekend_rate : roomRates.weekday_rate;
+            cur.setDate(cur.getDate() + 1);
+          }
+          return total;
+        })();
       const addonRaw = (b.addons || []).reduce((s, a) => s + (a.price || 0), 0);
       const disc = Math.min(Math.round((roomRaw + addonRaw) * ((b.discount || 0) + (b.promo_discount || 0)) / 100), 200);
       const due = roomRaw + addonRaw - disc;
